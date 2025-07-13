@@ -77,10 +77,10 @@ const loadParquetFiles = async () => {
   console.log('Loading parquet files...');
   
   try {
-    // Load parquet files from the public folder
-    const buildingsResponse = await fetch('/buildings.parquet');
+    // Load geoparquet files from the public folder
+    const buildingsResponse = await fetch('/buildings.geoparquet');
     if (!buildingsResponse.ok) {
-      throw new Error(`Failed to load buildings.parquet: ${buildingsResponse.status}`);
+      throw new Error(`Failed to load buildings.geoparquet: ${buildingsResponse.status}`);
     }
     const buildingsBuffer = await buildingsResponse.arrayBuffer();
     console.log('Buildings file loaded, size:', buildingsBuffer.byteLength);
@@ -92,12 +92,12 @@ const loadParquetFiles = async () => {
         buildingsArray[1] !== 0x41 || 
         buildingsArray[2] !== 0x52 || 
         buildingsArray[3] !== 0x31) {
-      throw new Error('Invalid parquet file format: buildings.parquet');
+      throw new Error('Invalid geoparquet file format: buildings.geoparquet');
     }
     
-    const roadsResponse = await fetch('/roads.parquet');
+    const roadsResponse = await fetch('/roads.geoparquet');
     if (!roadsResponse.ok) {
-      throw new Error(`Failed to load roads.parquet: ${roadsResponse.status}`);
+      throw new Error(`Failed to load roads.geoparquet: ${roadsResponse.status}`);
     }
     const roadsBuffer = await roadsResponse.arrayBuffer();
     console.log('Roads file loaded, size:', roadsBuffer.byteLength);
@@ -108,12 +108,12 @@ const loadParquetFiles = async () => {
         roadsArray[1] !== 0x41 || 
         roadsArray[2] !== 0x52 || 
         roadsArray[3] !== 0x31) {
-      throw new Error('Invalid parquet file format: roads.parquet');
+      throw new Error('Invalid geoparquet file format: roads.geoparquet');
     }
     
-    const landuseResponse = await fetch('/landuse.parquet');
+    const landuseResponse = await fetch('/landuse.geoparquet');
     if (!landuseResponse.ok) {
-      throw new Error(`Failed to load landuse.parquet: ${landuseResponse.status}`);
+      throw new Error(`Failed to load landuse.geoparquet: ${landuseResponse.status}`);
     }
     const landuseBuffer = await landuseResponse.arrayBuffer();
     console.log('Landuse file loaded, size:', landuseBuffer.byteLength);
@@ -124,21 +124,23 @@ const loadParquetFiles = async () => {
         landuseArray[1] !== 0x41 || 
         landuseArray[2] !== 0x52 || 
         landuseArray[3] !== 0x31) {
-      throw new Error('Invalid parquet file format: landuse.parquet');
+      throw new Error('Invalid geoparquet file format: landuse.geoparquet');
     }
 
     // Register the files with DuckDB
-    await db.registerFileBuffer('buildings.parquet', buildingsArray);
-    await db.registerFileBuffer('roads.parquet', roadsArray);
-    await db.registerFileBuffer('landuse.parquet', landuseArray);
+    await db.registerFileBuffer('buildings.geoparquet', buildingsArray);
+    await db.registerFileBuffer('roads.geoparquet', roadsArray);
+    await db.registerFileBuffer('landuse.geoparquet', landuseArray);
 
     console.log('Parquet files registered successfully');
   } catch (error) {
     console.error('Error loading parquet files:', error);
-    console.log('Creating sample data instead...');
-    await createSampleData();
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to load parquet files: ${errorMessage}. Please ensure the parquet files are valid and not corrupted.`);
   }
 };
+
+
 
 // Helper function to serialize DuckDB results
 const serializeResult = (data: any[]): any[] => {
@@ -220,67 +222,67 @@ export const getSampleQueries = () => {
   return [
     {
       keyword: 'buildings',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') LIMIT 1000",
       description: 'Show all buildings in Estonia (limited to 1000)'
     },
     {
       keyword: 'commercial',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'commercial' OR building = 'retail' OR building = 'office' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE building = 'commercial' OR building = 'retail' OR building = 'office' LIMIT 1000",
       description: 'Show commercial buildings and offices'
     },
     {
       keyword: 'residential',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'residential' OR building = 'house' OR building = 'apartments' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE building = 'residential' OR building = 'house' OR building = 'apartments' LIMIT 1000",
       description: 'Show residential buildings and houses'
     },
     {
       keyword: 'roads',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.parquet') LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.geoparquet') LIMIT 1000",
       description: 'Show all roads in Estonia (limited to 1000)'
     },
     {
       keyword: 'highway',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.parquet') WHERE highway IN ('motorway', 'trunk', 'primary', 'secondary') LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.geoparquet') WHERE highway IN ('motorway', 'trunk', 'primary', 'secondary') LIMIT 1000",
       description: 'Show major highways and primary roads'
     },
     {
       keyword: 'landuse',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') LIMIT 1000",
       description: 'Show all land use areas in Estonia (limited to 1000)'
     },
     {
       keyword: 'residential-areas',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'residential' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') WHERE landuse = 'residential' LIMIT 1000",
       description: 'Show residential land use areas'
     },
     {
       keyword: 'commercial-zones',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'commercial' OR landuse = 'retail' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') WHERE landuse = 'commercial' OR landuse = 'retail' LIMIT 1000",
       description: 'Show commercial and retail zones'
     },
     {
       keyword: 'parks',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'park' OR landuse = 'recreation_ground' OR landuse = 'leisure' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') WHERE landuse = 'park' OR landuse = 'recreation_ground' OR landuse = 'leisure' LIMIT 1000",
       description: 'Show parks and recreational areas'
     },
     {
       keyword: 'industrial',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'industrial' OR landuse = 'manufacturing' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') WHERE landuse = 'industrial' OR landuse = 'manufacturing' LIMIT 1000",
       description: 'Show industrial areas'
     },
     {
       keyword: 'schools',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'school' OR building = 'university' OR building = 'college' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE building = 'school' OR building = 'university' OR building = 'college' LIMIT 1000",
       description: 'Show schools and educational buildings'
     },
     {
       keyword: 'hospitals',
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'hospital' OR building = 'clinic' OR building = 'medical' LIMIT 1000",
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE building = 'hospital' OR building = 'clinic' OR building = 'medical' LIMIT 1000",
       description: 'Show hospitals and medical facilities'
     },
     {
       keyword: 'schema',
-      query: "DESCRIBE SELECT * FROM read_parquet('buildings.parquet') LIMIT 0",
+      query: "DESCRIBE SELECT * FROM read_parquet('buildings.geoparquet') LIMIT 0",
       description: 'Show buildings table schema'
     }
   ];

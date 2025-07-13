@@ -258,7 +258,7 @@ const MapComponent: React.FC = () => {
           mapboxAccessToken={import.meta.env.VITE_MAPBOX_ACCESS_TOKEN}
           mapStyle="mapbox://styles/mapbox/light-v11"
         >
-          <NavigationControl position="top-left" />
+          <NavigationControl position="bottom-right" />
         </Map>
       </DeckGL>
 
