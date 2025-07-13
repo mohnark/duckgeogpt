@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { queryDuckDB, getSampleQueries } from '../services/duckdbService';
 
 interface Message {
   id: string;
@@ -8,7 +9,7 @@ interface Message {
 }
 
 interface ChatBoxProps {
-  onQueryGenerated: (query: string, label?: string) => void;
+  onQueryGenerated: (geoJSONString: string, label?: string) => void;
   onCenterMap: (place: string) => void;
 }
 
@@ -18,7 +19,7 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: 'Hi! I can help you generate Overpass queries for Tartu or center the map on a place. Try asking "Show all parks" or "Center map on Paris".',
+      text: 'Hi! I can help you explore geospatial data in Estonia. Try asking:\n\n• "Show me buildings in Tallinn"\n• "Find residential areas"\n• "Display roads"\n• "Center map on Tartu"\n• "What land use types are available?"\n\nOr ask me to find specific features like schools, parks, or commercial buildings!',
       isUser: false,
       timestamp: new Date()
     }
@@ -44,6 +45,110 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
     setMessages(prev => [...prev, newMessage]);
   };
 
+  // Convert DuckDB results to GeoJSON
+  const convertToGeoJSON = (data: any[]): any => {
+    console.log('Converting data to GeoJSON, sample row:', data[0]);
+    
+    return {
+      type: 'FeatureCollection',
+      features: data.map((row, index) => {
+        // Parse WKT geometry from DuckDB
+        let geometry = null;
+        
+        if (row.geometry_wkt) {
+          console.log(`Parsing WKT geometry: ${row.geometry_wkt}`);
+          
+          // Parse WKT (Well-Known Text) format
+          const wkt = row.geometry_wkt;
+          
+          // Handle POINT
+          const pointMatch = wkt.match(/POINT\s*\(([^)]+)\)/i);
+          if (pointMatch) {
+            const coords = pointMatch[1].split(' ').map(Number);
+            geometry = {
+              type: 'Point',
+              coordinates: coords
+            };
+          } else {
+            // Handle LINESTRING
+            const lineMatch = wkt.match(/LINESTRING\s*\(([^)]+)\)/i);
+            if (lineMatch) {
+              const coords = lineMatch[1].split(',').map((c: string) => 
+                c.trim().split(' ').map(Number)
+              );
+              geometry = {
+                type: 'LineString',
+                coordinates: coords
+              };
+            } else {
+              // Handle POLYGON
+              const polygonMatch = wkt.match(/POLYGON\s*\(\(([^)]+)\)\)/i);
+              if (polygonMatch) {
+                const coords = polygonMatch[1].split(',').map((c: string) => 
+                  c.trim().split(' ').map(Number)
+                );
+                geometry = {
+                  type: 'Polygon',
+                  coordinates: [coords]
+                };
+              } else {
+                // Handle MULTIPOLYGON
+                const multiPolygonMatch = wkt.match(/MULTIPOLYGON\s*\(\(\(([^)]+)\)\)\)/i);
+                if (multiPolygonMatch) {
+                  const coords = multiPolygonMatch[1].split(',').map((c: string) => 
+                    c.trim().split(' ').map(Number)
+                  );
+                  geometry = {
+                    type: 'Polygon',
+                    coordinates: [coords]
+                  };
+                }
+              }
+            }
+          }
+        }
+        
+        // Fallback to coordinate fields if no WKT geometry
+        if (!geometry) {
+          if (row.lon && row.lat) {
+            geometry = {
+              type: 'Point',
+              coordinates: [row.lon, row.lat]
+            };
+          } else if (row.longitude && row.latitude) {
+            geometry = {
+              type: 'Point',
+              coordinates: [row.longitude, row.latitude]
+            };
+          } else {
+            // Default point at origin
+            geometry = {
+              type: 'Point',
+              coordinates: [0, 0]
+            };
+          }
+        }
+
+        const feature = {
+          type: 'Feature',
+          id: index,
+          geometry: geometry,
+          properties: Object.fromEntries(
+            Object.entries(row).filter(([key]) => 
+              !['geometry', 'geometry_wkt', 'geom', 'shape', 'wkt', 'coordinates', 'lon', 'lat', 'longitude', 'latitude', 'x', 'y'].includes(key)
+            )
+          )
+        };
+        
+        if (index === 0) {
+          console.log('First feature:', feature);
+        }
+        
+        return feature;
+      })
+    };
+  };
+
   const handleSubmit = async () => {
     if (!input.trim() || loading) return;
 
@@ -63,73 +168,67 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         return;
       }
 
-      // Otherwise, treat as Overpass query
-      const response = await simulateOpenAIResponse(userInput);
-      const query = extractOverpassQuery(response);
-      if (query) {
-        addMessage(`Searching for ${userInput}...`, false);
-        onQueryGenerated(query, userInput);
+      // Detect if user wants to see available data types
+      if (userInput.toLowerCase().includes('available') || userInput.toLowerCase().includes('types') || userInput.toLowerCase().includes('what')) {
+        addMessage(`Here are the available data types and sample queries:\n\n• **Buildings**: "Show me buildings in Tallinn", "Find commercial buildings", "Display residential buildings"\n• **Roads**: "Show me roads", "Find highways", "Display primary roads"\n• **Land Use**: "Show me residential areas", "Find commercial zones", "Display parks"\n\nYou can also ask for specific features like schools, hospitals, or shopping centers!`, false);
+        setLoading(false);
+        return;
+      }
+
+      // Otherwise, treat as DuckDB query
+      const lowerInput = userInput.toLowerCase();
+      let query = '';
+      let queryType = '';
+
+      // Get sample queries for keyword matching
+      const sampleQueries = getSampleQueries();
+      const matchedQuery = sampleQueries.find(sq => 
+        lowerInput.includes(sq.keyword.toLowerCase())
+      );
+
+      if (matchedQuery) {
+        query = matchedQuery.query;
+        queryType = matchedQuery.keyword;
       } else {
-        addMessage(response, false);
+        // Default query for unknown keywords
+        query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') LIMIT 1000";
+        queryType = 'buildings';
+      }
+
+      addMessage(`Executing query: ${query}`, false);
+      
+      const result = await queryDuckDB(query);
+
+      if (result && result.length > 0) {
+        const count = result.length;
+        
+        // Handle schema inspection queries
+        if (queryType.includes('schema')) {
+          addMessage(`Schema has ${count} columns:`, false);
+          const schemaText = result.map((col: any) => `${col.column_name} (${col.column_type})`).join(', ');
+          addMessage(schemaText, false);
+          return;
+        }
+        
+        addMessage(`Found ${count} ${queryType} in the database.`, false);
+        
+        // Convert to GeoJSON and send to map
+        const geoJSON = convertToGeoJSON(result);
+        console.log('Converted GeoJSON:', geoJSON);
+        console.log('GeoJSON features count:', geoJSON.features.length);
+        console.log('First feature:', geoJSON.features[0]);
+        
+        onQueryGenerated(JSON.stringify(geoJSON), userInput);
+      } else {
+        addMessage(`No ${queryType} found. Try a different search term.`, false);
       }
     } catch (error) {
-      addMessage('Sorry, I encountered an error. Please try again.', false);
+      console.error('Error executing DuckDB query:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      addMessage(`Error: ${errorMessage}. Please try again.`, false);
     } finally {
       setLoading(false);
     }
-  };
-
-  const simulateOpenAIResponse = async (prompt: string): Promise<string> => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Simple response logic for demo
-    const lowerPrompt = prompt.toLowerCase();
-    if (lowerPrompt.includes('park') || lowerPrompt.includes('green')) {
-      return `Here's an Overpass query to find parks in Tartu:
-
-\`\`\`
-[out:json][timeout:25];
-(
-  way["leisure"="park"](58.3476,26.6951,58.4076,26.7551);
-  relation["leisure"="park"](58.3476,26.6951,58.4076,26.7551);
-);
-out body;
->;
-out skel qt;
-\`\`\`
-
-This will find all parks in the Tartu area.`;
-    } else if (lowerPrompt.includes('restaurant') || lowerPrompt.includes('food')) {
-      return `Here's an Overpass query to find restaurants in Tartu:
-
-\`\`\`
-[out:json][timeout:25];
-(
-  way["amenity"="restaurant"](58.3476,26.6951,58.4076,26.7551);
-  node["amenity"="restaurant"](58.3476,26.6951,58.4076,26.7551);
-);
-out body;
->;
-out skel qt;
-\`\`\`
-
-This will find all restaurants in the Tartu area.`;
-    } else {
-      return `I can help you generate Overpass queries for Tartu. Try asking about:
-- Parks and green spaces
-- Restaurants and cafes
-- Schools and universities
-- Hospitals and medical facilities
-- Shopping centers and stores
-
-What would you like to find?`;
-    }
-  };
-
-  const extractOverpassQuery = (response: string): string | null => {
-    const match = response.match(/```\n([\s\S]*?)\n```/);
-    return match ? match[1].trim() : null;
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -143,7 +242,7 @@ What would you like to find?`;
     <div style={{
       position: 'absolute',
       bottom: '20px',
-      right: '20px', 
+      right: '0px',
       zIndex: 1000,
       width: '350px',
       maxHeight: '500px'
@@ -167,7 +266,7 @@ What would you like to find?`;
             backgroundColor: '#f8f9fa',
             fontWeight: 'bold'
           }}>
-            AI Assistant
+            Estonia Geospatial Assistant
           </div>
 
           {/* Messages */}
@@ -212,7 +311,7 @@ What would you like to find?`;
                   backgroundColor: '#f1f3f4',
                   fontSize: '14px'
                 }}>
-                  Thinking...
+                  Searching...
                 </div>
               </div>
             )}
@@ -232,7 +331,7 @@ What would you like to find?`;
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Ask me to find something in Tartu..."
+                placeholder="Ask me to find something in Estonia..."
                 style={{
                   flex: 1,
                   padding: '8px 12px',

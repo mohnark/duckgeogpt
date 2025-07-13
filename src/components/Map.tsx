@@ -1,13 +1,21 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Map, useControl } from 'react-map-gl';
-import { MapboxOverlay } from '@deck.gl/mapbox';
-import { DeckProps } from '@deck.gl/core';
-import { LineLayer, PolygonLayer } from '@deck.gl/layers';
-import { NavigationControl } from 'react-map-gl';
+import React, { useEffect, useState, useMemo } from 'react';
+import { Map, NavigationControl, ViewState } from 'react-map-gl';
+import DeckGL from '@deck.gl/react';
+import { GeoJsonLayer } from '@deck.gl/layers';
+import { WebMercatorViewport } from '@deck.gl/core';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import ChatBox from './ChatBox';
-import { fetchTartuData } from '../services/overpassService';
 
 const TARTU_CENTER = [26.7251, 58.3776];
+
+const INITIAL_VIEW_STATE: ViewState = {
+  longitude: TARTU_CENTER[0],
+  latitude: TARTU_CENTER[1],
+  zoom: 13,
+  pitch: 0,
+  bearing: 0,
+  padding: { top: 0, bottom: 0, left: 0, right: 0 }
+};
 
 interface MapData {
   roads: any[];
@@ -15,122 +23,88 @@ interface MapData {
   queryLayers?: any[];
 }
 
-function DeckGLOverlay(props: DeckProps & { interleaved?: boolean }) {
-  const overlay = useControl<MapboxOverlay>(() => new MapboxOverlay({ ...props, interleaved: props.interleaved }));
-  overlay.setProps(props);
-  return null;
-}
-
 const MapComponent: React.FC = () => {
   const [mapData, setMapData] = useState<MapData>({ roads: [], buildings: [], queryLayers: [] });
-  const [viewState, setViewState] = useState({
-    longitude: TARTU_CENTER[0],
-    latitude: TARTU_CENTER[1],
-    zoom: 13,
-    pitch: 0,
-    bearing: 0,
-    width: window.innerWidth,
-    height: window.innerHeight
-    // padding?: any
-  } as any);
-  const mapRef = useRef(null);
+  const [viewState, setViewState] = useState<ViewState>(INITIAL_VIEW_STATE);
+  const [queryResults, setQueryResults] = useState<any>(null);
 
-  useEffect(() => {
-    const loadData = async () => {
-      const data = await fetchTartuData();
-      setMapData(prev => ({ ...prev, roads: data.roads, buildings: data.buildings }));
-    };
-    loadData();
-  }, []);
+  // Calculate bounding box and fit viewport
+  const fitViewportToFeatures = (features: any[]) => {
+    if (!features || features.length === 0) return;
 
-  // Update width/height on resize
-  useEffect(() => {
-    const handleResize = () => {
-      setViewState((prev: any) => ({ ...prev, width: window.innerWidth, height: window.innerHeight }));
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    console.log('Fitting viewport to', features.length, 'features');
 
-  const layers = [
-    new LineLayer({
-      id: 'roads-layer',
-      data: mapData.roads,
-      getPath: (d: any) => d.geometry?.coordinates || [],
-      getColor: [255, 0, 0],
-      getWidth: 2,
-      pickable: true,
-      visible: true
-    }),
-    new PolygonLayer({
-      id: 'buildings-layer',
-      data: mapData.buildings,
-      getPolygon: (d: any) => d.geometry?.coordinates || [],
-      getFillColor: [0, 0, 255],
-      getLineColor: [0, 0, 0],
-      getLineWidth: 1,
-      pickable: true,
-      visible: true
-    }),
-    ...(mapData.queryLayers || [])
-  ];
+    const coords = features.flatMap((f: any) => {
+      const g = f.geometry;
+      if (!g) return [];
+      const c = g.coordinates;
+      switch (g.type) {
+        case 'Point': return [c];
+        case 'MultiPoint':
+        case 'LineString': return c;
+        case 'Polygon':
+        case 'MultiLineString': return c.flat();
+        case 'MultiPolygon': return c.flat(2);
+        default: return [];
+      }
+    });
 
-  // Add a new query layer to the map
-  const handleQueryGenerated = async (query: string, label?: string) => {
-    try {
-      const response = await fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        body: `data=${encodeURIComponent(query)}`,
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        }
+    if (coords.length) {
+      const lons = coords.map((c: number[]) => c[0]);
+      const lats = coords.map((c: number[]) => c[1]);
+      
+      console.log('Coordinate ranges:', {
+        lons: [Math.min(...lons), Math.max(...lons)],
+        lats: [Math.min(...lats), Math.max(...lats)]
       });
-      if (!response.ok) throw new Error('Failed to fetch data from Overpass API');
-      const data = await response.json();
-      if (data.elements && data.elements.length > 0) {
-        // Try to detect geometry type
-        const isPolygon = data.elements.some((el: any) => el.geometry && el.geometry.length > 2 && el.geometry[0].lat === el.geometry[el.geometry.length-1].lat && el.geometry[0].lon === el.geometry[el.geometry.length-1].lon);
-        const processedData = data.elements
-          .filter((element: any) => element.type === 'way' && element.geometry)
-          .map((element: any) => ({
-            id: element.id,
-            type: 'Feature',
-            geometry: {
-              type: isPolygon ? 'Polygon' : 'LineString',
-              coordinates: isPolygon
-                ? [element.geometry.map((coord: any) => [coord.lon, coord.lat])]
-                : element.geometry.map((coord: any) => [coord.lon, coord.lat])
-            },
-            properties: element.tags || {}
-          }));
-        const color = isPolygon ? [255, 165, 0, 180] : [0, 255, 0, 180];
-        const layer = isPolygon
-          ? new PolygonLayer({
-              id: `query-polygon-${Date.now()}`,
-              data: processedData,
-              getPolygon: (d: any) => d.geometry.coordinates,
-              getFillColor: () => [255, 165, 0, 180],
-              getLineColor: () => [0, 0, 0, 255],
-              getLineWidth: 2,
-              pickable: true,
-              visible: true
-            })
-          : new LineLayer({
-              id: `query-line-${Date.now()}`,
-              data: processedData,
-              getPath: (d: any) => d.geometry.coordinates,
-              getColor: () => [0, 255, 0, 180],
-              getWidth: 3,
-              pickable: true,
-              visible: true
-            });
-        setMapData(prev => ({
-          ...prev,
-          queryLayers: [...(prev.queryLayers || []), layer]
-        }));
+
+      const viewport = new WebMercatorViewport({
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+      
+      const { longitude, latitude, zoom } = viewport.fitBounds(
+        [
+          [Math.min(...lons), Math.min(...lats)],
+          [Math.max(...lons), Math.max(...lats)]
+        ],
+        { padding: 20 }
+      );
+      
+      console.log('New viewport:', { longitude, latitude, zoom });
+      setViewState({ 
+        longitude, 
+        latitude, 
+        zoom, 
+        pitch: 0, 
+        bearing: 0,
+        padding: { top: 0, bottom: 0, left: 0, right: 0 }
+      });
+    }
+  };
+
+  // Handle DuckDB query results
+  const handleQueryGenerated = async (geoJSONString: string, label?: string) => {
+    try {
+      console.log('Received GeoJSON string:', geoJSONString.substring(0, 200) + '...');
+      const geoJSON = JSON.parse(geoJSONString);
+      console.log('Parsed GeoJSON:', geoJSON);
+      
+      if (geoJSON.features && geoJSON.features.length > 0) {
+        console.log(`Processing ${geoJSON.features.length} features`);
+        
+        // Store the query results
+        setQueryResults(geoJSON);
+        
+        // Fit viewport to the features
+        fitViewportToFeatures(geoJSON.features);
+        
+        console.log(`Added ${geoJSON.features.length} features from DuckDB query`);
+      } else {
+        console.log('No features found in GeoJSON');
       }
     } catch (error) {
-      console.error('Error executing generated query:', error);
+      console.error('Error processing DuckDB results:', error);
     }
   };
 
@@ -142,31 +116,67 @@ const MapComponent: React.FC = () => {
       const data = await res.json();
       if (data && data.length > 0) {
         const { lon, lat } = data[0];
-        setViewState((prev: any) => ({
-          ...prev,
+        setViewState({
           longitude: parseFloat(lon),
           latitude: parseFloat(lat),
-          zoom: 13
-        }));
+          zoom: 13,
+          pitch: 0,
+          bearing: 0,
+          padding: { top: 0, bottom: 0, left: 0, right: 0 }
+        });
       }
     } catch (error) {
       console.error('Error centering map:', error);
     }
   };
 
+  // Create layers using useMemo for better performance
+  const layers = useMemo(() => {
+    const out = [];
+    
+    // Add query results layer
+    if (queryResults) {
+      console.log('Creating GeoJsonLayer with data:', queryResults);
+      out.push(
+        new GeoJsonLayer({
+          id: 'duckdb-query-results',
+          data: queryResults,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          getLineColor: [0, 255, 0],
+          getFillColor: [255, 165, 0, 180],
+          lineWidthMinPixels: 2,
+          getTooltip: ({ object }: { object: any }) =>
+            object && `Feature: ${JSON.stringify(object.properties, null, 2)}`
+        })
+      );
+    }
+    
+    console.log('Layers created:', out.length, 'layers');
+    return out;
+  }, [queryResults]);
+
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
-      <Map
-        ref={mapRef}
-        initialViewState={viewState}
+    <div style={{ width: '100%', height: '100vh', position: 'relative' }}>
+      <DeckGL
+        initialViewState={INITIAL_VIEW_STATE}
         viewState={viewState}
-        onMove={evt => setViewState(evt.viewState)}
-        mapStyle="mapbox://styles/mapbox/light-v9"
-        mapboxAccessToken={import.meta.env.VITE_MAPBOX_ACCESS_TOKEN}
+        onViewStateChange={({ viewState: newViewState }) => {
+          if (newViewState && typeof newViewState === 'object' && 'longitude' in newViewState) {
+            setViewState(newViewState as ViewState);
+          }
+        }}
+        controller
+        layers={layers}
       >
-        <DeckGLOverlay layers={layers} interleaved />
-        <NavigationControl position="top-right" />
-      </Map>
+        <Map
+          mapboxAccessToken={import.meta.env.VITE_MAPBOX_ACCESS_TOKEN}
+          mapStyle="mapbox://styles/mapbox/light-v11"
+        >
+          <NavigationControl position="top-left" />
+        </Map>
+      </DeckGL>
       <ChatBox onQueryGenerated={handleQueryGenerated} onCenterMap={handleCenterMap} />
     </div>
   );

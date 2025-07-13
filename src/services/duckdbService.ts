@@ -1,0 +1,253 @@
+import { AsyncDuckDB, selectBundle, getJsDelivrBundles, ConsoleLogger, createWorker } from '@duckdb/duckdb-wasm';
+
+let db: AsyncDuckDB | null = null;
+let initializationPromise: Promise<AsyncDuckDB> | null = null;
+
+export const initializeDuckDB = async (): Promise<AsyncDuckDB> => {
+  if (db) {
+    return db;
+  }
+
+  // Prevent multiple simultaneous initializations
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+
+  initializationPromise = (async () => {
+    try {
+      console.log('Initializing DuckDB WASM...');
+      
+      // Initialize DuckDB WASM with explicit bundle selection
+      const bundles = getJsDelivrBundles();
+      console.log('Available bundles:', Object.keys(bundles));
+      
+      // Try to select the best bundle for the current environment
+      const bundle = await selectBundle(bundles);
+      console.log('Selected bundle:', bundle);
+      
+      if (!bundle.mainWorker) {
+        throw new Error('No worker URL found in bundle');
+      }
+      
+      console.log('Creating worker from:', bundle.mainWorker);
+      const worker = await createWorker(bundle.mainWorker);
+      console.log('Worker created successfully');
+      
+      db = new AsyncDuckDB(new ConsoleLogger(), worker);
+      console.log('AsyncDuckDB instance created');
+      
+      // Initialize the database
+      await db.instantiate(bundle.mainModule);
+      console.log('DuckDB instantiated successfully');
+      
+      // Install and load spatial extension
+      console.log('Installing spatial extension...');
+      const spatialConnection = await db.connect();
+      await spatialConnection.query('INSTALL spatial');
+      await spatialConnection.query('LOAD spatial');
+      console.log('Spatial extension loaded successfully');
+      await spatialConnection.close();
+      
+      // Load the parquet files
+      await loadParquetFiles();
+      
+      // Test the database with a simple query
+      console.log('Testing database connection...');
+      const connection = await db.connect();
+      const testResult = await connection.query('SELECT 1 as test');
+      console.log('Test query result:', testResult.toArray());
+      await connection.close();
+      console.log('Database test successful');
+      
+      return db;
+    } catch (error) {
+      console.error('Failed to initialize DuckDB:', error);
+      db = null;
+      initializationPromise = null;
+      throw error;
+    }
+  })();
+
+  return initializationPromise;
+};
+
+const loadParquetFiles = async () => {
+  if (!db) return;
+
+  console.log('Loading parquet files...');
+  
+  // Load parquet files from the public folder
+  const buildingsResponse = await fetch('/buildings.parquet');
+  if (!buildingsResponse.ok) {
+    throw new Error(`Failed to load buildings.parquet: ${buildingsResponse.status}`);
+  }
+  const buildingsBuffer = await buildingsResponse.arrayBuffer();
+  console.log('Buildings file loaded, size:', buildingsBuffer.byteLength);
+  
+  const roadsResponse = await fetch('/roads.parquet');
+  if (!roadsResponse.ok) {
+    throw new Error(`Failed to load roads.parquet: ${roadsResponse.status}`);
+  }
+  const roadsBuffer = await roadsResponse.arrayBuffer();
+  console.log('Roads file loaded, size:', roadsBuffer.byteLength);
+  
+  const landuseResponse = await fetch('/landuse.parquet');
+  if (!landuseResponse.ok) {
+    throw new Error(`Failed to load landuse.parquet: ${landuseResponse.status}`);
+  }
+  const landuseBuffer = await landuseResponse.arrayBuffer();
+  console.log('Landuse file loaded, size:', landuseBuffer.byteLength);
+
+  // Register the files with DuckDB
+  await db.registerFileBuffer('buildings.parquet', new Uint8Array(buildingsBuffer));
+  await db.registerFileBuffer('roads.parquet', new Uint8Array(roadsBuffer));
+  await db.registerFileBuffer('landuse.parquet', new Uint8Array(landuseBuffer));
+
+  console.log('Parquet files registered successfully');
+};
+
+// Helper function to serialize DuckDB results
+const serializeResult = (data: any[]): any[] => {
+  return data.map(row => {
+    const serializedRow: any = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (typeof value === 'bigint') {
+        serializedRow[key] = Number(value);
+      } else if (value === null || value === undefined) {
+        serializedRow[key] = null;
+      } else if (typeof value === 'object' && value !== null) {
+        // Handle nested objects (like geometry)
+        serializedRow[key] = JSON.parse(JSON.stringify(value, (_, v) => 
+          typeof v === 'bigint' ? Number(v) : v
+        ));
+      } else {
+        serializedRow[key] = value;
+      }
+    }
+    return serializedRow;
+  });
+};
+
+export const queryDuckDB = async (query: string): Promise<any[]> => {
+  try {
+    console.log('Executing DuckDB query:', query);
+    
+    const database = await initializeDuckDB();
+    console.log('Database initialized, connecting...');
+    
+    const connection = await database.connect();
+    console.log('Connected to database');
+    
+    const result = await connection.query(query);
+    console.log('Query executed, converting to array...');
+    
+    const rawData = result.toArray();
+    console.log('Raw query result:', rawData.length, 'rows');
+    
+    // Serialize the data to handle BigInt and other non-serializable types
+    const data = serializeResult(rawData);
+    console.log('Serialized data ready');
+    
+    // Debug: Log the first few rows to see the structure
+    if (data.length > 0) {
+      console.log('First row structure:', Object.keys(data[0]));
+      console.log('Sample geometry data:', data[0].geometry);
+      console.log('Sample row data:', data[0]);
+    }
+    
+    await connection.close();
+    console.log('Connection closed');
+    
+    return data;
+  } catch (error) {
+    console.error('DuckDB query error:', error);
+    throw error;
+  }
+};
+
+export const inspectParquetSchema = async (filename: string): Promise<any[]> => {
+  try {
+    const database = await initializeDuckDB();
+    const connection = await database.connect();
+    
+    // Get the schema of the parquet file
+    const result = await connection.query(`DESCRIBE SELECT * FROM read_parquet('${filename}') LIMIT 0`);
+    const schema = result.toArray();
+    
+    await connection.close();
+    return schema;
+  } catch (error) {
+    console.error('Error inspecting parquet schema:', error);
+    throw error;
+  }
+};
+
+export const getSampleQueries = () => {
+  return [
+    {
+      keyword: 'buildings',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') LIMIT 1000",
+      description: 'Show all buildings in Estonia (limited to 1000)'
+    },
+    {
+      keyword: 'commercial',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'commercial' OR building = 'retail' OR building = 'office' LIMIT 1000",
+      description: 'Show commercial buildings and offices'
+    },
+    {
+      keyword: 'residential',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'residential' OR building = 'house' OR building = 'apartments' LIMIT 1000",
+      description: 'Show residential buildings and houses'
+    },
+    {
+      keyword: 'roads',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.parquet') LIMIT 1000",
+      description: 'Show all roads in Estonia (limited to 1000)'
+    },
+    {
+      keyword: 'highway',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.parquet') WHERE highway IN ('motorway', 'trunk', 'primary', 'secondary') LIMIT 1000",
+      description: 'Show major highways and primary roads'
+    },
+    {
+      keyword: 'landuse',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') LIMIT 1000",
+      description: 'Show all land use areas in Estonia (limited to 1000)'
+    },
+    {
+      keyword: 'residential-areas',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'residential' LIMIT 1000",
+      description: 'Show residential land use areas'
+    },
+    {
+      keyword: 'commercial-zones',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'commercial' OR landuse = 'retail' LIMIT 1000",
+      description: 'Show commercial and retail zones'
+    },
+    {
+      keyword: 'parks',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'park' OR landuse = 'recreation_ground' OR landuse = 'leisure' LIMIT 1000",
+      description: 'Show parks and recreational areas'
+    },
+    {
+      keyword: 'industrial',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.parquet') WHERE landuse = 'industrial' OR landuse = 'manufacturing' LIMIT 1000",
+      description: 'Show industrial areas'
+    },
+    {
+      keyword: 'schools',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'school' OR building = 'university' OR building = 'college' LIMIT 1000",
+      description: 'Show schools and educational buildings'
+    },
+    {
+      keyword: 'hospitals',
+      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') WHERE building = 'hospital' OR building = 'clinic' OR building = 'medical' LIMIT 1000",
+      description: 'Show hospitals and medical facilities'
+    },
+    {
+      keyword: 'schema',
+      query: "DESCRIBE SELECT * FROM read_parquet('buildings.parquet') LIMIT 0",
+      description: 'Show buildings table schema'
+    }
+  ];
+}; 
