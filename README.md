@@ -1,46 +1,167 @@
-# osm-mcp-demo
+# Estonia Geospatial Demo App
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+An interactive web application for exploring geospatial data in Estonia using React, DeckGL, and DuckDB for local data processing.
 
-## Available Scripts
+## Features
 
-In the project directory, you can run:
+### 🗺️ Interactive Map
+- **DeckGL Integration**: High-performance 3D map rendering with WebGL
+- **Multiple Layers**: Support for buildings, roads, and land use data
+- **Automatic Zooming**: Smart viewport fitting to query results
+- **Navigation Controls**: Pan, zoom, and rotate functionality
 
-### `npm start`
+### 💬 AI-Powered Chat Interface
+- **Natural Language Queries**: Ask questions in plain English
+- **Smart Query Matching**: Automatic detection of data types and locations
+- **Quick Actions**: One-click buttons for common queries
+- **Query History**: Track and manage your previous searches
+- **Help System**: Built-in guidance and examples
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+### 🔍 Advanced Search & Navigation
+- **Location Search**: Find any place in Estonia with autocomplete
+- **Popular Cities**: Quick access to major Estonian cities
+- **Geocoding**: Automatic coordinate resolution via Nominatim
+- **Real-time Results**: Instant search suggestions
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+### 📊 Layer Management
+- **Multiple Query Results**: Run multiple queries and compare results
+- **Layer Visibility**: Show/hide individual query layers
+- **Color Coding**: Automatic color assignment for different layers
+- **Layer Controls**: Collapsible panel with layer management
+- **Feature Counts**: Display number of features per layer
 
-### `npm test`
+### 📁 Data Export
+- **GeoJSON Export**: Preserve geometry and properties
+- **CSV Export**: Tabular format with coordinates
+- **Selective Export**: Choose which queries to export
+- **Batch Export**: Export multiple queries at once
+- **Automatic Naming**: Date-stamped file names
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### ℹ️ Information Panel
+- **Current Location**: Display active map location
+- **Layer Statistics**: Show active layers and feature counts
+- **Data Sources**: Information about available datasets
+- **Usage Tips**: Helpful guidance for users
 
-### `npm run build`
+### 🎨 Modern UI/UX
+- **Responsive Design**: Works on desktop and mobile
+- **Clean Interface**: Modern, intuitive design
+- **Smooth Animations**: Polished user experience
+- **Accessibility**: Keyboard navigation and screen reader support
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Data Sources
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+The application uses OpenStreetMap data for Estonia, including:
+- **Buildings**: Residential, commercial, and public buildings
+- **Roads**: Highways, primary roads, and local streets
+- **Land Use**: Residential areas, parks, commercial zones
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Technology Stack
 
-### `npm run eject`
+- **Frontend**: React 18 with TypeScript
+- **Mapping**: DeckGL + react-map-gl + Mapbox
+- **Database**: DuckDB WASM for client-side data processing
+- **Data Format**: Parquet files for efficient storage
+- **Styling**: Inline styles for component isolation
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+## Getting Started
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+1. **Install Dependencies**:
+   ```bash
+   npm install
+   ```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+2. **Set up Mapbox Token**:
+   Create a `.env` file in the root directory:
+   ```
+   VITE_MAPBOX_ACCESS_TOKEN=your_mapbox_token_here
+   ```
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+3. **Start Development Server**:
+   ```bash
+   npm run dev
+   ```
 
-## Learn More
+4. **Open Browser**:
+   Navigate to `http://localhost:5173`
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## Usage Examples
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### Chat Queries
+- "Show me buildings in Tallinn"
+- "Find residential areas"
+- "Display roads"
+- "Center map on Tartu"
+- "What land use types are available?"
+
+### Quick Actions
+- Buildings, Roads, Residential, Commercial
+- Parks, Schools, Highways
+- Center on Tartu
+
+### Layer Management
+- Toggle layer visibility
+- Remove individual layers
+- Clear all layers
+- View feature counts
+
+### Data Export
+- Select queries to export
+- Choose GeoJSON or CSV format
+- Download with automatic naming
+
+## File Structure
+
+```
+src/
+├── components/
+│   ├── Map.tsx              # Main map component
+│   ├── ChatBox.tsx          # AI chat interface
+│   ├── SearchBar.tsx        # Location search
+│   ├── InfoPanel.tsx        # Information display
+│   ├── ExportPanel.tsx      # Data export
+│   └── LayerSelector.tsx    # Layer management
+├── services/
+│   ├── duckdbService.ts     # DuckDB integration
+│   └── overpassService.ts   # Overpass API (legacy)
+└── public/
+    ├── buildings.geoparquet # Building data
+    ├── roads.geoparquet     # Road data
+    └── landuse.geoparquet   # Land use data
+```
+
+## Performance Features
+
+- **Client-side Processing**: All data processing happens in the browser
+- **Efficient Queries**: DuckDB provides fast SQL queries on parquet files
+- **WebGL Rendering**: Hardware-accelerated map rendering
+- **Lazy Loading**: Components load only when needed
+- **Memory Management**: Automatic cleanup of unused layers
+
+## Browser Support
+
+- Chrome 80+
+- Firefox 75+
+- Safari 13+
+- Edge 80+
+
+Requires WebGL support for optimal performance.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+MIT License - see LICENSE file for details.
+
+## Acknowledgments
+
+- OpenStreetMap contributors for the geospatial data
+- DuckDB team for the excellent WASM implementation
+- Mapbox for the mapping platform
+- DeckGL team for the powerful WebGL mapping library

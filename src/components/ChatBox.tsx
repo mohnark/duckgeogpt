@@ -25,6 +25,8 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
     }
   ]);
   const [loading, setLoading] = useState(false);
+  const [queryHistory, setQueryHistory] = useState<string[]>([]);
+  const [showQuickActions, setShowQuickActions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -43,6 +45,115 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
       timestamp: new Date()
     };
     setMessages(prev => [...prev, newMessage]);
+  };
+
+  // Quick action buttons
+  const quickActions = [
+    { label: 'Buildings', query: 'buildings' },
+    { label: 'Roads', query: 'roads' },
+    { label: 'Residential', query: 'residential-areas' },
+    { label: 'Commercial', query: 'commercial' },
+    { label: 'Parks', query: 'parks' },
+    { label: 'Schools', query: 'schools' },
+    { label: 'Highways', query: 'highway' },
+    { label: 'Center Tartu', action: 'center', place: 'Tartu' }
+  ];
+
+  const handleQuickAction = (action: any) => {
+    if (action.action === 'center') {
+      addMessage(`Center map on ${action.place}`, true);
+      onCenterMap(action.place);
+    } else {
+      addMessage(action.query, true);
+      handleQuery(action.query);
+    }
+  };
+
+  const handleQuery = async (queryText: string) => {
+    setLoading(true);
+
+    try {
+      // Detect if user wants to center the map
+      const centerMatch = queryText.match(/(?:center|go to|move|fly)\s+(?:map\s+)?(?:on|to)?\s*([\w\s,]+)/i);
+      if (centerMatch && centerMatch[1]) {
+        const place = centerMatch[1].trim();
+        addMessage(`Centering map on ${place}...`, false);
+        onCenterMap(place);
+        setLoading(false);
+        return;
+      }
+
+      // Detect if user wants to see available data types
+      if (queryText.toLowerCase().includes('available') || queryText.toLowerCase().includes('types') || queryText.toLowerCase().includes('what')) {
+        addMessage(`Here are the available data types and sample queries:\n\n• **Buildings**: "Show me buildings in Tallinn", "Find commercial buildings", "Display residential buildings"\n• **Roads**: "Show me roads", "Find highways", "Display primary roads"\n• **Land Use**: "Show me residential areas", "Find commercial zones", "Display parks"\n\nYou can also ask for specific features like schools, hospitals, or shopping centers!`, false);
+        setLoading(false);
+        return;
+      }
+
+      // Otherwise, treat as DuckDB query
+      const lowerInput = queryText.toLowerCase();
+      let query = '';
+      let queryType = '';
+
+      // Get sample queries for keyword matching
+      const sampleQueries = getSampleQueries();
+      const matchedQuery = sampleQueries.find(sq => 
+        lowerInput.includes(sq.keyword.toLowerCase())
+      );
+
+      if (matchedQuery) {
+        query = matchedQuery.query;
+        queryType = matchedQuery.keyword;
+      } else {
+        // Default query for unknown keywords
+        query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') LIMIT 1000";
+        queryType = 'buildings';
+      }
+
+      addMessage(`Executing query: ${query}`, false);
+      
+      const result = await queryDuckDB(query);
+
+      if (result && result.length > 0) {
+        const count = result.length;
+        
+        // Handle schema inspection queries
+        if (queryType.includes('schema')) {
+          addMessage(`Schema has ${count} columns:`, false);
+          const schemaText = result.map((col: any) => `${col.column_name} (${col.column_type})`).join(', ');
+          addMessage(schemaText, false);
+          return;
+        }
+        
+        addMessage(`Found ${count} ${queryType} in the database.`, false);
+        
+        // Convert to GeoJSON and send to map
+        const geoJSON = convertToGeoJSON(result);
+        console.log('Converted GeoJSON:', geoJSON);
+        console.log('GeoJSON features count:', geoJSON.features.length);
+        console.log('First feature:', geoJSON.features[0]);
+        
+        // Add to query history
+        setQueryHistory(prev => [...prev, queryText]);
+        
+        onQueryGenerated(JSON.stringify(geoJSON), queryText);
+      } else {
+        addMessage(`No ${queryType} found. Try a different search term.`, false);
+      }
+    } catch (error) {
+      console.error('Error executing DuckDB query:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      addMessage(`Error: ${errorMessage}. Please try again.`, false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!input.trim() || loading) return;
+    const userInput = input.trim();
+    setInput('');
+    await handleQuery(userInput);
   };
 
   // Convert DuckDB results to GeoJSON
@@ -149,88 +260,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
     };
   };
 
-  const handleSubmit = async () => {
-    if (!input.trim() || loading) return;
-
-    const userInput = input.trim();
-    setInput('');
-    addMessage(userInput, true);
-    setLoading(true);
-
-    try {
-      // Detect if user wants to center the map
-      const centerMatch = userInput.match(/(?:center|go to|move|fly)\s+(?:map\s+)?(?:on|to)?\s*([\w\s,]+)/i);
-      if (centerMatch && centerMatch[1]) {
-        const place = centerMatch[1].trim();
-        addMessage(`Centering map on ${place}...`, false);
-        onCenterMap(place);
-        setLoading(false);
-        return;
-      }
-
-      // Detect if user wants to see available data types
-      if (userInput.toLowerCase().includes('available') || userInput.toLowerCase().includes('types') || userInput.toLowerCase().includes('what')) {
-        addMessage(`Here are the available data types and sample queries:\n\n• **Buildings**: "Show me buildings in Tallinn", "Find commercial buildings", "Display residential buildings"\n• **Roads**: "Show me roads", "Find highways", "Display primary roads"\n• **Land Use**: "Show me residential areas", "Find commercial zones", "Display parks"\n\nYou can also ask for specific features like schools, hospitals, or shopping centers!`, false);
-        setLoading(false);
-        return;
-      }
-
-      // Otherwise, treat as DuckDB query
-      const lowerInput = userInput.toLowerCase();
-      let query = '';
-      let queryType = '';
-
-      // Get sample queries for keyword matching
-      const sampleQueries = getSampleQueries();
-      const matchedQuery = sampleQueries.find(sq => 
-        lowerInput.includes(sq.keyword.toLowerCase())
-      );
-
-      if (matchedQuery) {
-        query = matchedQuery.query;
-        queryType = matchedQuery.keyword;
-      } else {
-        // Default query for unknown keywords
-        query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') LIMIT 1000";
-        queryType = 'buildings';
-      }
-
-      addMessage(`Executing query: ${query}`, false);
-      
-      const result = await queryDuckDB(query);
-
-      if (result && result.length > 0) {
-        const count = result.length;
-        
-        // Handle schema inspection queries
-        if (queryType.includes('schema')) {
-          addMessage(`Schema has ${count} columns:`, false);
-          const schemaText = result.map((col: any) => `${col.column_name} (${col.column_type})`).join(', ');
-          addMessage(schemaText, false);
-          return;
-        }
-        
-        addMessage(`Found ${count} ${queryType} in the database.`, false);
-        
-        // Convert to GeoJSON and send to map
-        const geoJSON = convertToGeoJSON(result);
-        console.log('Converted GeoJSON:', geoJSON);
-        console.log('GeoJSON features count:', geoJSON.features.length);
-        console.log('First feature:', geoJSON.features[0]);
-        
-        onQueryGenerated(JSON.stringify(geoJSON), userInput);
-      } else {
-        addMessage(`No ${queryType} found. Try a different search term.`, false);
-      }
-    } catch (error) {
-      console.error('Error executing DuckDB query:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      addMessage(`Error: ${errorMessage}. Please try again.`, false);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -264,10 +293,62 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
             borderBottom: '1px solid #eee',
             borderRadius: '12px 12px 0 0',
             backgroundColor: '#f8f9fa',
-            fontWeight: 'bold'
+            fontWeight: 'bold',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
           }}>
-            Estonia Geospatial Assistant
+            <span>Estonia Geospatial Assistant</span>
+            <button
+              onClick={() => setShowQuickActions(!showQuickActions)}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '14px',
+                cursor: 'pointer',
+                color: '#007bff',
+                padding: '4px 8px',
+                borderRadius: '4px'
+              }}
+            >
+              {showQuickActions ? 'Hide' : 'Quick'} Actions
+            </button>
           </div>
+
+          {/* Quick Actions */}
+          {showQuickActions && (
+            <div style={{
+              padding: '12px 16px',
+              borderBottom: '1px solid #eee',
+              backgroundColor: '#f8f9fa'
+            }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '6px'
+              }}>
+                {quickActions.map((action, index) => (
+                  <button
+                    key={index}
+                    onClick={() => handleQuickAction(action)}
+                    disabled={loading}
+                    style={{
+                      background: '#007bff',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '6px 8px',
+                      fontSize: '12px',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      opacity: loading ? 0.6 : 1
+                    }}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Messages */}
           <div style={{
