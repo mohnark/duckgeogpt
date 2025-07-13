@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { queryDuckDB, getSampleQueries } from '../services/duckdbService';
+import { queryDuckDB, getSampleQueries, generateLocationQuery } from '../services/duckdbService';
 
 interface Message {
   id: string;
@@ -19,7 +19,7 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: 'Hi! I can help you explore geospatial data in Estonia. Try asking:\n\n• "Show me buildings in Tallinn"\n• "Find residential areas"\n• "Display roads"\n• "Center map on Tartu"\n• "What land use types are available?"\n\nOr ask me to find specific features like schools, parks, or commercial buildings!',
+      text: 'Hi! I can help you explore geospatial data in Estonia. Try asking:\n\n• "Show me buildings around Tartu"\n• "Find roads within 5km of Tallinn"\n• "Display parks near Pärnu"\n• "Show residential areas in Narva"\n• "Center map on Viljandi"\n\nI can filter data by location and radius - just ask naturally!',
       isUser: false,
       timestamp: new Date()
     }
@@ -90,28 +90,86 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         return;
       }
 
-      // Otherwise, treat as DuckDB query
+      // Intelligent query parsing
       const lowerInput = queryText.toLowerCase();
       let query = '';
       let queryType = '';
+      let location = '';
+      let radius = 10; // Default 10km radius
 
-      // Get sample queries for keyword matching
-      const sampleQueries = getSampleQueries();
-      const matchedQuery = sampleQueries.find(sq => 
-        lowerInput.includes(sq.keyword.toLowerCase())
-      );
+      // Extract location from query
+      const locationPatterns = [
+        /(?:in|around|near|at|within|close to)\s+([a-zA-ZäöüõÄÖÜÕ\-\s]+?)(?:\s|$|,|\.)/i,
+        /([a-zA-ZäöüõÄÖÜÕ\-\s]+?)\s+(?:buildings?|roads?|areas?|zones?|parks?|schools?)/i
+      ];
 
-      if (matchedQuery) {
-        query = matchedQuery.query;
-        queryType = matchedQuery.keyword;
-      } else {
-        // Default query for unknown keywords
-        query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.parquet') LIMIT 1000";
-        queryType = 'buildings';
+      for (const pattern of locationPatterns) {
+        const match = queryText.match(pattern);
+        if (match && match[1]) {
+          location = match[1].trim().toLowerCase();
+          break;
+        }
       }
 
-      addMessage(`Executing query: ${query}`, false);
-      
+      // Extract radius if specified
+      const radiusMatch = queryText.match(/(\d+)\s*(?:km|kilometer|kilometers)/i);
+      if (radiusMatch) {
+        radius = parseInt(radiusMatch[1]);
+      }
+
+      // Determine data type and build query
+      if (lowerInput.includes('building')) {
+        queryType = 'buildings';
+        if (location) {
+          query = await generateLocationQuery('buildings', location, radius);
+          addMessage(`Searching for buildings within ${radius}km of ${location}...`, false);
+        } else {
+          query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') LIMIT 1000";
+          addMessage(`Searching for all buildings in Estonia...`, false);
+        }
+      } else if (lowerInput.includes('road') || lowerInput.includes('highway') || lowerInput.includes('street')) {
+        queryType = 'roads';
+        if (location) {
+          query = await generateLocationQuery('roads', location, radius);
+          addMessage(`Searching for roads within ${radius}km of ${location}...`, false);
+        } else {
+          query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.geoparquet') LIMIT 1000";
+          addMessage(`Searching for all roads in Estonia...`, false);
+        }
+      } else if (lowerInput.includes('landuse') || lowerInput.includes('area') || lowerInput.includes('zone') || lowerInput.includes('park') || lowerInput.includes('residential') || lowerInput.includes('commercial')) {
+        queryType = 'landuse';
+        if (location) {
+          query = await generateLocationQuery('landuse', location, radius);
+          addMessage(`Searching for land use areas within ${radius}km of ${location}...`, false);
+        } else {
+          query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') LIMIT 1000";
+          addMessage(`Searching for all land use areas in Estonia...`, false);
+        }
+      } else {
+        // Fallback to sample queries
+        const sampleQueries = getSampleQueries();
+        const matchedQuery = sampleQueries.find(sq => 
+          lowerInput.includes(sq.keyword.toLowerCase())
+        );
+
+        if (matchedQuery) {
+          query = matchedQuery.query;
+          queryType = matchedQuery.keyword;
+          addMessage(`Executing predefined query for ${queryType}...`, false);
+        } else {
+          // Default to buildings
+          queryType = 'buildings';
+          if (location) {
+            query = await generateLocationQuery('buildings', location, radius);
+            addMessage(`Searching for buildings within ${radius}km of ${location}...`, false);
+          } else {
+            query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') LIMIT 1000";
+            addMessage(`Searching for all buildings in Estonia...`, false);
+          }
+        }
+      }
+
+      console.log('Generated query:', query);
       const result = await queryDuckDB(query);
 
       if (result && result.length > 0) {
@@ -125,7 +183,8 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
           return;
         }
         
-        addMessage(`Found ${count} ${queryType} in the database.`, false);
+        const locationText = location ? ` within ${radius}km of ${location}` : '';
+        addMessage(`Found ${count} ${queryType}${locationText} in the database.`, false);
         
         // Convert to GeoJSON and send to map
         const geoJSON = convertToGeoJSON(result);
@@ -136,9 +195,11 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         // Add to query history
         setQueryHistory(prev => [...prev, queryText]);
         
-        onQueryGenerated(JSON.stringify(geoJSON), queryText);
+        const label = location ? `${queryType} around ${location}` : queryType;
+        onQueryGenerated(JSON.stringify(geoJSON), label);
       } else {
-        addMessage(`No ${queryType} found. Try a different search term.`, false);
+        const locationText = location ? ` within ${radius}km of ${location}` : '';
+        addMessage(`No ${queryType} found${locationText}. Try a different search term or location.`, false);
       }
     } catch (error) {
       console.error('Error executing DuckDB query:', error);

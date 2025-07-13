@@ -218,6 +218,82 @@ export const inspectParquetSchema = async (filename: string): Promise<any[]> => 
   }
 };
 
+// Remove hardcoded city coordinates - we'll query the data dynamically
+// const CITY_COORDINATES = { ... } - REMOVED
+
+// Helper function to find location coordinates dynamically
+const findLocationCoordinates = async (locationName: string): Promise<{ lat: number; lon: number } | null> => {
+  try {
+    const database = await initializeDuckDB();
+    const connection = await database.connect();
+    
+    // Try to find the location in different datasets
+    const queries = [
+      // Look for named places in buildings
+      `SELECT ST_X(ST_Centroid(geometry)) as lon, ST_Y(ST_Centroid(geometry)) as lat 
+       FROM read_parquet('buildings.geoparquet') 
+       WHERE LOWER(name) LIKE '%${locationName.toLowerCase()}%' 
+       OR LOWER(addr_city) LIKE '%${locationName.toLowerCase()}%'
+       LIMIT 1`,
+      
+      // Look for named places in landuse
+      `SELECT ST_X(ST_Centroid(geometry)) as lon, ST_Y(ST_Centroid(geometry)) as lat 
+       FROM read_parquet('landuse.geoparquet') 
+       WHERE LOWER(name) LIKE '%${locationName.toLowerCase()}%'
+       LIMIT 1`,
+      
+      // Look for named places in roads
+      `SELECT ST_X(ST_Centroid(geometry)) as lon, ST_Y(ST_Centroid(geometry)) as lat 
+       FROM read_parquet('roads.geoparquet') 
+       WHERE LOWER(name) LIKE '%${locationName.toLowerCase()}%'
+       LIMIT 1`
+    ];
+    
+    for (const query of queries) {
+      try {
+        const result = await connection.query(query);
+        const data = result.toArray();
+        if (data.length > 0 && data[0].lon && data[0].lat) {
+          await connection.close();
+          return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
+        }
+      } catch (error) {
+        console.log(`Query failed for ${locationName}:`, error);
+        continue;
+      }
+    }
+    
+    await connection.close();
+    return null;
+  } catch (error) {
+    console.error('Error finding location coordinates:', error);
+    return null;
+  }
+};
+
+// Helper function to generate spatial queries dynamically
+const generateSpatialQuery = async (dataType: string, location: string, radiusKm: number = 10) => {
+  const coords = await findLocationCoordinates(location);
+  if (!coords) {
+    // If location not found, return a general query
+    return `SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('${dataType}.geoparquet') LIMIT 1000`;
+  }
+  
+  const { lat, lon } = coords;
+  const radiusDegrees = radiusKm / 111; // Approximate conversion from km to degrees
+  
+  return `
+    SELECT *, ST_AsText(geometry) as geometry_wkt 
+    FROM read_parquet('${dataType}.geoparquet') 
+    WHERE ST_DWithin(
+      geometry, 
+      ST_Point(${lon}, ${lat}), 
+      ${radiusDegrees}
+    )
+    LIMIT 1000
+  `;
+};
+
 export const getSampleQueries = () => {
   return [
     {
@@ -286,4 +362,27 @@ export const getSampleQueries = () => {
       description: 'Show buildings table schema'
     }
   ];
+};
+
+// New function to generate dynamic spatial queries
+export const generateLocationQuery = async (dataType: string, location: string, radiusKm: number = 10): Promise<string> => {
+  const coords = await findLocationCoordinates(location);
+  if (!coords) {
+    // If location not found in data, return a general query
+    return `SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('${dataType}.geoparquet') LIMIT 1000`;
+  }
+  
+  const { lat, lon } = coords;
+  const radiusDegrees = radiusKm / 111; // Approximate conversion from km to degrees
+  
+  return `
+    SELECT *, ST_AsText(geometry) as geometry_wkt 
+    FROM read_parquet('${dataType}.geoparquet') 
+    WHERE ST_DWithin(
+      geometry, 
+      ST_Point(${lon}, ${lat}), 
+      ${radiusDegrees}
+    )
+    LIMIT 1000
+  `;
 }; 
