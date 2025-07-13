@@ -76,34 +76,68 @@ const loadParquetFiles = async () => {
 
   console.log('Loading parquet files...');
   
-  // Load parquet files from the public folder
-  const buildingsResponse = await fetch('/buildings.parquet');
-  if (!buildingsResponse.ok) {
-    throw new Error(`Failed to load buildings.parquet: ${buildingsResponse.status}`);
-  }
-  const buildingsBuffer = await buildingsResponse.arrayBuffer();
-  console.log('Buildings file loaded, size:', buildingsBuffer.byteLength);
-  
-  const roadsResponse = await fetch('/roads.parquet');
-  if (!roadsResponse.ok) {
-    throw new Error(`Failed to load roads.parquet: ${roadsResponse.status}`);
-  }
-  const roadsBuffer = await roadsResponse.arrayBuffer();
-  console.log('Roads file loaded, size:', roadsBuffer.byteLength);
-  
-  const landuseResponse = await fetch('/landuse.parquet');
-  if (!landuseResponse.ok) {
-    throw new Error(`Failed to load landuse.parquet: ${landuseResponse.status}`);
-  }
-  const landuseBuffer = await landuseResponse.arrayBuffer();
-  console.log('Landuse file loaded, size:', landuseBuffer.byteLength);
+  try {
+    // Load parquet files from the public folder
+    const buildingsResponse = await fetch('/buildings.parquet');
+    if (!buildingsResponse.ok) {
+      throw new Error(`Failed to load buildings.parquet: ${buildingsResponse.status}`);
+    }
+    const buildingsBuffer = await buildingsResponse.arrayBuffer();
+    console.log('Buildings file loaded, size:', buildingsBuffer.byteLength);
+    
+    // Check if file has valid parquet magic bytes
+    const buildingsArray = new Uint8Array(buildingsBuffer);
+    if (buildingsArray.length < 4 || 
+        buildingsArray[0] !== 0x50 || 
+        buildingsArray[1] !== 0x41 || 
+        buildingsArray[2] !== 0x52 || 
+        buildingsArray[3] !== 0x31) {
+      throw new Error('Invalid parquet file format: buildings.parquet');
+    }
+    
+    const roadsResponse = await fetch('/roads.parquet');
+    if (!roadsResponse.ok) {
+      throw new Error(`Failed to load roads.parquet: ${roadsResponse.status}`);
+    }
+    const roadsBuffer = await roadsResponse.arrayBuffer();
+    console.log('Roads file loaded, size:', roadsBuffer.byteLength);
+    
+    const roadsArray = new Uint8Array(roadsBuffer);
+    if (roadsArray.length < 4 || 
+        roadsArray[0] !== 0x50 || 
+        roadsArray[1] !== 0x41 || 
+        roadsArray[2] !== 0x52 || 
+        roadsArray[3] !== 0x31) {
+      throw new Error('Invalid parquet file format: roads.parquet');
+    }
+    
+    const landuseResponse = await fetch('/landuse.parquet');
+    if (!landuseResponse.ok) {
+      throw new Error(`Failed to load landuse.parquet: ${landuseResponse.status}`);
+    }
+    const landuseBuffer = await landuseResponse.arrayBuffer();
+    console.log('Landuse file loaded, size:', landuseBuffer.byteLength);
+    
+    const landuseArray = new Uint8Array(landuseBuffer);
+    if (landuseArray.length < 4 || 
+        landuseArray[0] !== 0x50 || 
+        landuseArray[1] !== 0x41 || 
+        landuseArray[2] !== 0x52 || 
+        landuseArray[3] !== 0x31) {
+      throw new Error('Invalid parquet file format: landuse.parquet');
+    }
 
-  // Register the files with DuckDB
-  await db.registerFileBuffer('buildings.parquet', new Uint8Array(buildingsBuffer));
-  await db.registerFileBuffer('roads.parquet', new Uint8Array(roadsBuffer));
-  await db.registerFileBuffer('landuse.parquet', new Uint8Array(landuseBuffer));
+    // Register the files with DuckDB
+    await db.registerFileBuffer('buildings.parquet', buildingsArray);
+    await db.registerFileBuffer('roads.parquet', roadsArray);
+    await db.registerFileBuffer('landuse.parquet', landuseArray);
 
-  console.log('Parquet files registered successfully');
+    console.log('Parquet files registered successfully');
+  } catch (error) {
+    console.error('Error loading parquet files:', error);
+    console.log('Creating sample data instead...');
+    await createSampleData();
+  }
 };
 
 // Helper function to serialize DuckDB results
