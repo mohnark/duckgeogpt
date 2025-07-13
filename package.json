@@ -8,24 +8,16 @@
     "@deck.gl/mapbox": "^9.1.13",
     "@deck.gl/react": "^9.1.13",
     "@duckdb/duckdb-wasm": "^1.29.1-dev132.0",
-    "@testing-library/dom": "^10.4.0",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^13.5.0",
-    "@types/jest": "^27.5.2",
-    "@types/node": "^16.18.126",
     "@types/react-map-gl": "^6.1.7",
     "deck.gl": "^9.1.13",
     "mapbox-gl": "^3.13.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-map-gl": "^7.1.7",
-    "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4"
+    "react-map-gl": "^7.1.7"
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
