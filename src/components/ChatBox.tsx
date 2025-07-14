@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { queryDuckDB, getSampleQueries, generateLocationQuery } from '../services/duckdbService';
+import { queryDuckDB } from '../services/duckdbService';
+import { analyzeQueryWithGPT, generateQueryExplanation, QueryIntent } from '../services/openaiService';
 
 interface Message {
   id: string;
@@ -19,7 +20,7 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: 'Hi! I can help you explore geospatial data in Estonia. Try asking:\n\n• "Show me buildings around Tartu"\n• "Find roads within 5km of Tallinn"\n• "Display parks near Pärnu"\n• "Show residential areas in Narva"\n• "Center map on Viljandi"\n\nI can filter data by location and radius - just ask naturally!',
+      text: 'Hi! I\'m your AI-powered geospatial assistant for Estonia. I can help you explore buildings, roads, and land use data.\n\nTry asking:\n• "Show me buildings around Tartu"\n• "Find commercial areas within 5km of Tallinn"\n• "Display parks and recreational spaces"\n• "Show me schools near residential areas"\n• "Center map on Viljandi"\n\nBe specific about what you want to see (buildings, roads, or land use) and where!',
       isUser: false,
       timestamp: new Date()
     }
@@ -49,13 +50,13 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
 
   // Quick action buttons
   const quickActions = [
-    { label: 'Buildings', query: 'buildings' },
-    { label: 'Roads', query: 'roads' },
-    { label: 'Residential', query: 'residential-areas' },
-    { label: 'Commercial', query: 'commercial' },
-    { label: 'Parks', query: 'parks' },
-    { label: 'Schools', query: 'schools' },
-    { label: 'Highways', query: 'highway' },
+    { label: 'Buildings', query: 'Show me buildings in Estonia' },
+    { label: 'Roads', query: 'Display roads in Estonia' },
+    { label: 'Residential', query: 'Find residential areas' },
+    { label: 'Commercial', query: 'Show commercial buildings and areas' },
+    { label: 'Parks', query: 'Display parks and recreational areas' },
+    { label: 'Schools', query: 'Find schools and educational buildings' },
+    { label: 'Highways', query: 'Show major highways and primary roads' },
     { label: 'Center Tartu', action: 'center', place: 'Tartu' }
   ];
 
@@ -83,128 +84,55 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         return;
       }
 
-      // Detect if user wants to see available data types
-      if (queryText.toLowerCase().includes('available') || queryText.toLowerCase().includes('types') || queryText.toLowerCase().includes('what')) {
-        addMessage(`Here are the available data types and sample queries:\n\n• **Buildings**: "Show me buildings in Tallinn", "Find commercial buildings", "Display residential buildings"\n• **Roads**: "Show me roads", "Find highways", "Display primary roads"\n• **Land Use**: "Show me residential areas", "Find commercial zones", "Display parks"\n\nYou can also ask for specific features like schools, hospitals, or shopping centers!`, false);
+      // Use Gemini to analyze and generate the query
+      addMessage(`🤖 Analyzing your request with AI...`, false);
+      
+      let queryIntent: QueryIntent;
+      try {
+        queryIntent = await analyzeQueryWithGPT(queryText);
+        addMessage(`✅ AI Analysis: ${queryIntent.explanation}`, false);
+      } catch (error) {
+        console.error('Gemini analysis failed:', error);
+        addMessage(`❌ AI analysis failed. Please try a more specific query like "Show me buildings in Tallinn" or "Find roads around Tartu".`, false);
         setLoading(false);
         return;
       }
 
-      // Intelligent query parsing
-      const lowerInput = queryText.toLowerCase();
-      let query = '';
-      let queryType = '';
-      let location = '';
-      let radius = 10; // Default 10km radius
-
-      // Extract location from query
-      const locationPatterns = [
-        /(?:in|around|near|at|within|close to)\s+([a-zA-ZäöüõÄÖÜÕ\-\s]+?)(?:\s|$|,|\.)/i,
-        /([a-zA-ZäöüõÄÖÜÕ\-\s]+?)\s+(?:buildings?|roads?|areas?|zones?|parks?|schools?)/i
-      ];
-
-      for (const pattern of locationPatterns) {
-        const match = queryText.match(pattern);
-        if (match && match[1]) {
-          location = match[1].trim().toLowerCase();
-          break;
-        }
-      }
-
-      // Extract radius if specified
-      const radiusMatch = queryText.match(/(\d+)\s*(?:km|kilometer|kilometers)/i);
-      if (radiusMatch) {
-        radius = parseInt(radiusMatch[1]);
-      }
-
-      // Determine data type and build query
-      if (lowerInput.includes('building')) {
-        queryType = 'buildings';
-        if (location) {
-          query = await generateLocationQuery('buildings', location, radius);
-          addMessage(`Searching for buildings within ${radius}km of ${location}...`, false);
-        } else {
-          query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') LIMIT 1000";
-          addMessage(`Searching for all buildings in Estonia...`, false);
-        }
-      } else if (lowerInput.includes('road') || lowerInput.includes('highway') || lowerInput.includes('street')) {
-        queryType = 'roads';
-        if (location) {
-          query = await generateLocationQuery('roads', location, radius);
-          addMessage(`Searching for roads within ${radius}km of ${location}...`, false);
-        } else {
-          query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.geoparquet') LIMIT 1000";
-          addMessage(`Searching for all roads in Estonia...`, false);
-        }
-      } else if (lowerInput.includes('landuse') || lowerInput.includes('area') || lowerInput.includes('zone') || lowerInput.includes('park') || lowerInput.includes('residential') || lowerInput.includes('commercial')) {
-        queryType = 'landuse';
-        if (location) {
-          query = await generateLocationQuery('landuse', location, radius);
-          addMessage(`Searching for land use areas within ${radius}km of ${location}...`, false);
-        } else {
-          query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') LIMIT 1000";
-          addMessage(`Searching for all land use areas in Estonia...`, false);
-        }
-      } else {
-        // Fallback to sample queries
-        const sampleQueries = getSampleQueries();
-        const matchedQuery = sampleQueries.find(sq => 
-          lowerInput.includes(sq.keyword.toLowerCase())
-        );
-
-        if (matchedQuery) {
-          query = matchedQuery.query;
-          queryType = matchedQuery.keyword;
-          addMessage(`Executing predefined query for ${queryType}...`, false);
-        } else {
-          // Default to buildings
-          queryType = 'buildings';
-          if (location) {
-            query = await generateLocationQuery('buildings', location, radius);
-            addMessage(`Searching for buildings within ${radius}km of ${location}...`, false);
-          } else {
-            query = "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') LIMIT 1000";
-            addMessage(`Searching for all buildings in Estonia...`, false);
-          }
-        }
-      }
-
-      console.log('Generated query:', query);
-      const result = await queryDuckDB(query);
+      // Execute the AI-generated query
+      addMessage(`🔍 Executing query...`, false);
+      console.log('AI Generated Query:', queryIntent.query);
+      
+      const result = await queryDuckDB(queryIntent.query);
 
       if (result && result.length > 0) {
         const count = result.length;
         
-        // Handle schema inspection queries
-        if (queryType.includes('schema')) {
-          addMessage(`Schema has ${count} columns:`, false);
-          const schemaText = result.map((col: any) => `${col.column_name} (${col.column_type})`).join(', ');
-          addMessage(schemaText, false);
-          return;
+        // Generate AI explanation of results
+        try {
+          const explanation = await generateQueryExplanation(queryIntent.query, result);
+          addMessage(`📊 ${explanation}`, false);
+        } catch (error) {
+          console.error('Error generating explanation:', error);
+          addMessage(`📊 Found ${count} ${queryIntent.dataType} features.`, false);
         }
-        
-        const locationText = location ? ` within ${radius}km of ${location}` : '';
-        addMessage(`Found ${count} ${queryType}${locationText} in the database.`, false);
         
         // Convert to GeoJSON and send to map
         const geoJSON = convertToGeoJSON(result);
         console.log('Converted GeoJSON:', geoJSON);
         console.log('GeoJSON features count:', geoJSON.features.length);
-        console.log('First feature:', geoJSON.features[0]);
         
         // Add to query history
         setQueryHistory(prev => [...prev, queryText]);
         
-        const label = location ? `${queryType} around ${location}` : queryType;
+        const label = queryIntent.location ? `${queryIntent.dataType} around ${queryIntent.location}` : queryIntent.dataType;
         onQueryGenerated(JSON.stringify(geoJSON), label);
       } else {
-        const locationText = location ? ` within ${radius}km of ${location}` : '';
-        addMessage(`No ${queryType} found${locationText}. Try a different search term or location.`, false);
+        addMessage(`❌ No ${queryIntent.dataType} found${queryIntent.location ? ` within ${queryIntent.radius}km of ${queryIntent.location}` : ''}. Try a different search term or location.`, false);
       }
     } catch (error) {
-      console.error('Error executing DuckDB query:', error);
+      console.error('Error executing query:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      addMessage(`Error: ${errorMessage}. Please try again.`, false);
+      addMessage(`❌ Error: ${errorMessage}. Please try again.`, false);
     } finally {
       setLoading(false);
     }

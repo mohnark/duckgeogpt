@@ -11,8 +11,10 @@ An interactive web application for exploring geospatial data in Estonia using Re
 - **Navigation Controls**: Pan, zoom, and rotate functionality
 
 ### 💬 AI-Powered Chat Interface
-- **Natural Language Queries**: Ask questions in plain English
-- **Smart Query Matching**: Automatic detection of data types and locations
+- **Gemini Integration**: Powered by Google's Gemini 2.0 Flash for intelligent query understanding
+- **Natural Language Queries**: Ask questions in plain English with complex reasoning
+- **Smart Query Analysis**: AI automatically determines data types, locations, and filters
+- **Intelligent Explanations**: Get AI-generated explanations of query results
 - **Quick Actions**: One-click buttons for common queries
 - **Query History**: Track and manage your previous searches
 - **Help System**: Built-in guidance and examples
@@ -71,9 +73,13 @@ The application uses OpenStreetMap data for Estonia, including:
    npm install
    ```
 
-2. **Set up Mapbox Token**:
+2. **Set up Environment Variables**:
    Create a `.env` file in the root directory:
    ```
+   # Google Gemini API Key - Get one from https://makersuite.google.com/app/apikey
+   VITE_GEMINI_API_KEY=your_gemini_api_key_here
+   
+   # Mapbox Access Token (optional - for better map tiles)
    VITE_MAPBOX_ACCESS_TOKEN=your_mapbox_token_here
    ```
 
@@ -89,10 +95,11 @@ The application uses OpenStreetMap data for Estonia, including:
 
 ### Chat Queries
 - "Show me buildings in Tallinn"
-- "Find residential areas"
-- "Display roads"
-- "Center map on Tartu"
-- "What land use types are available?"
+- "Find commercial areas within 5km of Tartu"
+- "Display parks and recreational spaces"
+- "Show me schools near residential areas"
+- "Center map on Viljandi"
+- "What types of buildings are available?"
 
 ### Quick Actions
 - Buildings, Roads, Residential, Commercial
@@ -123,6 +130,7 @@ src/
 │   └── LayerSelector.tsx    # Layer management
 ├── services/
 │   ├── duckdbService.ts     # DuckDB integration
+│   ├── openaiService.ts     # Google Gemini AI integration
 │   └── overpassService.ts   # Overpass API (legacy)
 └── public/
     ├── buildings.geoparquet # Building data
