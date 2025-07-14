@@ -65,8 +65,8 @@ Examples:
 - "Highways near Tallinn" → {"dataType": "roads", "location": "Tallinn", "radius": 10, "filters": {"highway": ["motorway", "trunk", "primary"]}, "query": "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.geoparquet') WHERE highway IN ('motorway', 'trunk', 'primary') AND ST_DWithin(geometry, ST_Point(24.7536, 59.4369), 0.09) LIMIT 1000", "explanation": "Find major highways within 10km of Tallinn"}
 - "Residential areas in Pärnu" → {"dataType": "landuse", "location": "Pärnu", "radius": 10, "filters": {"landuse": "residential"}, "query": "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') WHERE landuse = 'residential' AND ST_DWithin(geometry, ST_Point(24.4971, 58.3858), 0.09) LIMIT 1000", "explanation": "Find residential areas within 10km of Pärnu"}
 
-If the query is unclear or not related to geospatial data, respond with:
-{"dataType": "buildings", "location": "Tartu", "radius": 10, "filters": {}, "query": "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE ST_DWithin(geometry, ST_Point(26.7251, 58.3776), 0.09) LIMIT 1000", "explanation": "Showing buildings around Tartu as an example"}
+If the query is unclear, vague, or not related to geospatial data, respond with:
+{"error": "Please be more specific. Tell me what type of data you want (buildings, roads, or land use) and where you want to see it."}
 
 Generate the complete, executable SQL query that can be run directly in DuckDB.`;
 
@@ -103,80 +103,52 @@ Generate the complete, executable SQL query that can be run directly in DuckDB.`
       
       const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        // Fallback to a default query
-        console.log('No JSON found, using fallback query');
-        parsed = {
-          dataType: "buildings",
-          location: "Tartu",
-          radius: 10,
-          filters: {},
-          query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE ST_DWithin(geometry, ST_Point(26.7251, 58.3776), 0.09) LIMIT 1000",
-          explanation: "Showing buildings around Tartu as an example"
-        };
+        throw new Error('Please be more specific. Tell me what type of data you want (buildings, roads, or land use) and where you want to see it.');
       } else {
         try {
           parsed = JSON.parse(jsonMatch[0]);
         } catch (secondParseError) {
           console.error('Second JSON parse error:', secondParseError);
-          // Final fallback
-          parsed = {
-            dataType: "buildings",
-            location: "Tartu",
-            radius: 10,
-            filters: {},
-            query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE ST_DWithin(geometry, ST_Point(26.7251, 58.3776), 0.09) LIMIT 1000",
-            explanation: "Showing buildings around Tartu as an example"
-          };
+          throw new Error('Please be more specific. Tell me what type of data you want (buildings, roads, or land use) and where you want to see it.');
         }
       }
     }
 
     console.log('Parsed JSON:', parsed);
     
+    // Check if the AI returned an error response
+    if (parsed.error) {
+      throw new Error(parsed.error);
+    }
+    
     // Validate the parsed object
     if (!parsed.dataType || !parsed.query || !parsed.explanation) {
-      console.log('Invalid parsed object, using fallback');
-      parsed = {
-        dataType: "buildings",
-        location: "Tartu",
-        radius: 10,
-        filters: {},
-        query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE ST_DWithin(geometry, ST_Point(26.7251, 58.3776), 0.09) LIMIT 1000",
-        explanation: "Showing buildings around Tartu as an example"
-      };
+      throw new Error('Please be more specific. Tell me what type of data you want (buildings, roads, or land use) and where you want to see it.');
     }
     
     return parsed as QueryIntent;
 
   } catch (error) {
     console.error('Gemini API error:', error);
-    // Return a fallback query instead of throwing
-    return {
-      dataType: "buildings",
-      location: "Tartu",
-      radius: 10,
-      filters: {},
-      query: "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE ST_DWithin(geometry, ST_Point(26.7251, 58.3776), 0.09) LIMIT 1000",
-      explanation: "Showing buildings around Tartu as an example"
-    };
+    throw error;
   }
 };
 
 export const generateQueryExplanation = async (query: string, results: any[]): Promise<string> => {
   try {
-    const prompt = `Explain this geospatial query result in a user-friendly way:
+    const prompt = `Give a brief, friendly explanation of this geospatial query result in 1-2 sentences maximum.
 
 Query: ${query}
 Results: ${results.length} features found
 
-Please provide a brief, natural explanation of what was found.`;
+Keep it simple and conversational.`;
 
     console.log('Generating explanation with Gemini...');
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     
     const result = await model.generateContent(prompt);
     const response = await result.response;
-    const explanation = response.text() || 'Query executed successfully.';
+    const explanation = response.text() || `Found ${results.length} features.`;
     
     console.log('Generated explanation:', explanation);
     return explanation;

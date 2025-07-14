@@ -218,7 +218,6 @@ export const inspectParquetSchema = async (filename: string): Promise<any[]> => 
   }
 };
 
-// OpenAI now handles all query generation, so we removed the old dynamic location logic
 
 export const getSampleQueries = () => {
   return [
@@ -290,4 +289,3 @@ export const getSampleQueries = () => {
   ];
 };
 
-// OpenAI now handles all query generation, so this function is no longer needed 

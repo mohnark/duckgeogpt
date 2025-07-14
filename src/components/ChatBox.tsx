@@ -85,21 +85,21 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
       }
 
       // Use Gemini to analyze and generate the query
-      addMessage(`🤖 Analyzing your request with AI...`, false);
+      addMessage(`Processing your query with Gemini...`, false);
       
       let queryIntent: QueryIntent;
       try {
         queryIntent = await analyzeQueryWithGPT(queryText);
-        addMessage(`✅ AI Analysis: ${queryIntent.explanation}`, false);
+        addMessage(`Analysis: ${queryIntent.explanation}`, false);
       } catch (error) {
         console.error('Gemini analysis failed:', error);
-        addMessage(`❌ AI analysis failed. Please try a more specific query like "Show me buildings in Tallinn" or "Find roads around Tartu".`, false);
+        addMessage(`I couldn't understand that. Try being more specific, like "Show me buildings in Tallinn" or "Find roads around Tartu".`, false);
         setLoading(false);
         return;
       }
 
       // Execute the AI-generated query
-      addMessage(`🔍 Executing query...`, false);
+      addMessage(`Running query...`, false);
       console.log('AI Generated Query:', queryIntent.query);
       
       const result = await queryDuckDB(queryIntent.query);
@@ -110,10 +110,10 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         // Generate AI explanation of results
         try {
           const explanation = await generateQueryExplanation(queryIntent.query, result);
-          addMessage(`📊 ${explanation}`, false);
+          addMessage(`${explanation}`, false);
         } catch (error) {
           console.error('Error generating explanation:', error);
-          addMessage(`📊 Found ${count} ${queryIntent.dataType} features.`, false);
+          addMessage(`Found ${count} ${queryIntent.dataType} features.`, false);
         }
         
         // Convert to GeoJSON and send to map
@@ -127,12 +127,12 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         const label = queryIntent.location ? `${queryIntent.dataType} around ${queryIntent.location}` : queryIntent.dataType;
         onQueryGenerated(JSON.stringify(geoJSON), label);
       } else {
-        addMessage(`❌ No ${queryIntent.dataType} found${queryIntent.location ? ` within ${queryIntent.radius}km of ${queryIntent.location}` : ''}. Try a different search term or location.`, false);
+        addMessage(`No ${queryIntent.dataType} found${queryIntent.location ? ` within ${queryIntent.radius}km of ${queryIntent.location}` : ''}. Try a different search term or location.`, false);
       }
     } catch (error) {
       console.error('Error executing query:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      addMessage(`❌ Error: ${errorMessage}. Please try again.`, false);
+      addMessage(`Error: ${errorMessage}. Please try again.`, false);
     } finally {
       setLoading(false);
     }
