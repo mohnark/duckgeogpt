@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "@deck.gl/core": "^9.1.13",
+    "@deck.gl/geo-layers": "^9.1.13",
     "@deck.gl/layers": "^9.1.13",
     "@deck.gl/mapbox": "^9.1.13",
     "@deck.gl/react": "^9.1.13",

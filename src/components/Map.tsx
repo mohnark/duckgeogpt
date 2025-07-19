@@ -49,8 +49,6 @@ const MapComponent: React.FC = () => {
   const fitViewportToFeatures = (features: any[]) => {
     if (!features || features.length === 0) return;
 
-    console.log('Fitting viewport to', features.length, 'features');
-
     const coords = features.flatMap((f: any) => {
       const g = f.geometry;
       if (!g) return [];
@@ -70,10 +68,7 @@ const MapComponent: React.FC = () => {
       const lons = coords.map((c: number[]) => c[0]);
       const lats = coords.map((c: number[]) => c[1]);
       
-      console.log('Coordinate ranges:', {
-        lons: [Math.min(...lons), Math.max(...lons)],
-        lats: [Math.min(...lats), Math.max(...lats)]
-      });
+
 
       const viewport = new WebMercatorViewport({
         width: window.innerWidth,
@@ -88,7 +83,6 @@ const MapComponent: React.FC = () => {
         { padding: 20 }
       );
       
-      console.log('New viewport:', { longitude, latitude, zoom });
       setViewState({ 
         longitude, 
         latitude, 
@@ -103,12 +97,9 @@ const MapComponent: React.FC = () => {
   // Handle DuckDB query results
   const handleQueryGenerated = async (geoJSONString: string, label?: string) => {
     try {
-      console.log('Received GeoJSON string:', geoJSONString.substring(0, 200) + '...');
       const geoJSON = JSON.parse(geoJSONString);
-      console.log('Parsed GeoJSON:', geoJSON);
       
       if (geoJSON.features && geoJSON.features.length > 0) {
-        console.log(`Processing ${geoJSON.features.length} features`);
         
         // Store the query results
         setQueryResults(geoJSON);
@@ -128,10 +119,6 @@ const MapComponent: React.FC = () => {
         
         // Fit viewport to the features
         fitViewportToFeatures(geoJSON.features);
-        
-        console.log(`Added ${geoJSON.features.length} features from DuckDB query`);
-      } else {
-        console.log('No features found in GeoJSON');
       }
     } catch (error) {
       console.error('Error processing DuckDB results:', error);
@@ -237,7 +224,6 @@ const MapComponent: React.FC = () => {
       }
     });
     
-    console.log('Layers created:', out.length, 'layers');
     return out;
   }, [queryHistory]);
 

@@ -100,7 +100,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
 
       // Execute the AI-generated query
       addMessage(`Running query...`, false);
-      console.log('AI Generated Query:', queryIntent.query);
       
       const result = await queryDuckDB(queryIntent.query);
 
@@ -118,8 +117,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         
         // Convert to GeoJSON and send to map
         const geoJSON = convertToGeoJSON(result);
-        console.log('Converted GeoJSON:', geoJSON);
-        console.log('GeoJSON features count:', geoJSON.features.length);
         
         // Add to query history
         setQueryHistory(prev => [...prev, queryText]);
@@ -147,7 +144,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
 
   // Convert DuckDB results to GeoJSON
   const convertToGeoJSON = (data: any[]): any => {
-    console.log('Converting data to GeoJSON, sample row:', data[0]);
     
     return {
       type: 'FeatureCollection',
@@ -156,8 +152,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         let geometry = null;
         
         if (row.geometry_wkt) {
-          console.log(`Parsing WKT geometry: ${row.geometry_wkt}`);
-          
           // Parse WKT (Well-Known Text) format
           const wkt = row.geometry_wkt;
           
@@ -239,10 +233,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
             )
           )
         };
-        
-        if (index === 0) {
-          console.log('First feature:', feature);
-        }
         
         return feature;
       })

@@ -14,8 +14,7 @@ export interface QueryIntent {
 export const analyzeQueryWithGPT = async (userQuery: string): Promise<QueryIntent> => {
   try {
     // Debug: Check if API key is loaded
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    console.log('Gemini API Key loaded:', apiKey ? 'Yes (length: ' + apiKey.length + ')' : 'No');
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     
     if (!apiKey) {
       throw new Error('VITE_GEMINI_API_KEY environment variable is not set');
@@ -30,7 +29,7 @@ Available datasets:
 
 Important SQL requirements:
 - Always use read_parquet('filename.geoparquet') to read data
-- Always include ST_AsText(geometry) as geometry_wkt in SELECT statements
+- Always include ST_AsGeoJSON(geometry) as geometry_json in SELECT statements
 - Always add LIMIT 1000 to prevent overwhelming results
 - Use ST_DWithin(geometry, ST_Point(lon, lat), radius_degrees) for spatial filtering
 - Convert km to degrees by dividing by 111 (approximate)
@@ -60,10 +59,10 @@ The JSON object must contain:
 }
 
 Examples:
-- "Show me buildings around Tartu" → {"dataType": "buildings", "location": "Tartu", "radius": 10, "query": "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE ST_DWithin(geometry, ST_Point(26.7251, 58.3776), 0.09) LIMIT 1000", "explanation": "Find buildings within 10km of Tartu"}
-- "Find commercial buildings" → {"dataType": "buildings", "filters": {"building": "commercial"}, "query": "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('buildings.geoparquet') WHERE building = 'commercial' LIMIT 1000", "explanation": "Find all commercial buildings"}
-- "Highways near Tallinn" → {"dataType": "roads", "location": "Tallinn", "radius": 10, "filters": {"highway": ["motorway", "trunk", "primary"]}, "query": "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('roads.geoparquet') WHERE highway IN ('motorway', 'trunk', 'primary') AND ST_DWithin(geometry, ST_Point(24.7536, 59.4369), 0.09) LIMIT 1000", "explanation": "Find major highways within 10km of Tallinn"}
-- "Residential areas in Pärnu" → {"dataType": "landuse", "location": "Pärnu", "radius": 10, "filters": {"landuse": "residential"}, "query": "SELECT *, ST_AsText(geometry) as geometry_wkt FROM read_parquet('landuse.geoparquet') WHERE landuse = 'residential' AND ST_DWithin(geometry, ST_Point(24.4971, 58.3858), 0.09) LIMIT 1000", "explanation": "Find residential areas within 10km of Pärnu"}
+- "Show me buildings around Tartu" → {"dataType": "buildings", "location": "Tartu", "radius": 10, "query": "SELECT *, ST_AsGeoJSON(geometry) as geometry_json FROM read_parquet('buildings.geoparquet') WHERE ST_DWithin(geometry, ST_Point(26.7251, 58.3776), 0.09) LIMIT 1000", "explanation": "Find buildings within 10km of Tartu"}
+- "Find commercial buildings" → {"dataType": "buildings", "filters": {"building": "commercial"}, "query": "SELECT *, ST_AsGeoJSON(geometry) as geometry_json FROM read_parquet('buildings.geoparquet') WHERE building = 'commercial' LIMIT 1000", "explanation": "Find all commercial buildings"}
+- "Highways near Tallinn" → {"dataType": "roads", "location": "Tallinn", "radius": 10, "filters": {"highway": ["motorway", "trunk", "primary"]}, "query": "SELECT *, ST_AsGeoJSON(geometry) as geometry_json FROM read_parquet('roads.geoparquet') WHERE highway IN ('motorway', 'trunk', 'primary') AND ST_DWithin(geometry, ST_Point(24.7536, 59.4369), 0.09) LIMIT 1000", "explanation": "Find major highways within 10km of Tallinn"}
+- "Residential areas in Pärnu" → {"dataType": "landuse", "location": "Pärnu", "radius": 10, "filters": {"landuse": "residential"}, "query": "SELECT *, ST_AsGeoJSON(geometry) as geometry_json FROM read_parquet('landuse.geoparquet') WHERE landuse = 'residential' AND ST_DWithin(geometry, ST_Point(24.4971, 58.3858), 0.09) LIMIT 1000", "explanation": "Find residential areas within 10km of Pärnu"}
 
 If the query is unclear, vague, or not related to geospatial data, respond with:
 {"error": "Please be more specific. Tell me what type of data you want (buildings, roads, or land use) and where you want to see it."}
@@ -72,7 +71,6 @@ Generate the complete, executable SQL query that can be run directly in DuckDB.`
 
     const fullPrompt = `${systemPrompt}\n\nUser query: ${userQuery}\n\nResponse:`;
 
-    console.log('Sending request to Gemini...');
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     
     const result = await model.generateContent(fullPrompt);
@@ -83,7 +81,7 @@ Generate the complete, executable SQL query that can be run directly in DuckDB.`
       throw new Error('No response from Gemini');
     }
 
-    console.log('Raw AI response:', content);
+
 
     // Clean the response - remove any markdown formatting
     let cleanContent = content.trim();
@@ -99,8 +97,6 @@ Generate the complete, executable SQL query that can be run directly in DuckDB.`
       parsed = JSON.parse(cleanContent);
     } catch (parseError) {
       console.error('JSON parse error:', parseError);
-      console.log('Attempting to extract JSON from response...');
-      
       const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         throw new Error('Please be more specific. Tell me what type of data you want (buildings, roads, or land use) and where you want to see it.');
@@ -114,7 +110,7 @@ Generate the complete, executable SQL query that can be run directly in DuckDB.`
       }
     }
 
-    console.log('Parsed JSON:', parsed);
+
     
     // Check if the AI returned an error response
     if (parsed.error) {
@@ -143,14 +139,12 @@ Results: ${results.length} features found
 
 Keep it simple and conversational.`;
 
-    console.log('Generating explanation with Gemini...');
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const explanation = response.text() || `Found ${results.length} features.`;
     
-    console.log('Generated explanation:', explanation);
     return explanation;
   } catch (error) {
     console.error('Error generating explanation:', error);

@@ -48,8 +48,6 @@ export const fetchTartuData = async () => {
       out skel qt;
     `;
 
-    console.log('Fetching roads and buildings data...');
-    
     const [roadsResponse, buildingsResponse] = await Promise.all([
       fetch('https://overpass-api.de/api/interpreter', {
         method: 'POST',
@@ -73,11 +71,6 @@ export const fetchTartuData = async () => {
 
     const roadsData: OverpassResponse = await roadsResponse.json();
     const buildingsData: OverpassResponse = await buildingsResponse.json();
-
-    console.log('Raw roads response:', roadsData);
-    console.log('Raw buildings response:', buildingsData);
-    console.log('Roads data:', roadsData.elements.length, 'elements');
-    console.log('Buildings data:', buildingsData.elements.length, 'elements');
 
     // Process roads data
     const processedRoads = roadsData.elements
@@ -104,9 +97,6 @@ export const fetchTartuData = async () => {
         },
         properties: element.tags || {}
       }));
-
-    console.log('Processed roads:', processedRoads.length);
-    console.log('Processed buildings:', processedBuildings.length);
 
     return {
       roads: processedRoads,
