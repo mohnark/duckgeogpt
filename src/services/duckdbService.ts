@@ -144,7 +144,7 @@ const serializeResult = (data: any[]): any[] => {
   });
 };
 
-export const queryDuckDB = async (query: string): Promise<any[]> => {
+export const queryDuckDB = async (query: string): Promise<any> => {
   try {
     const database = await initializeDuckDB();
     
@@ -159,7 +159,8 @@ export const queryDuckDB = async (query: string): Promise<any[]> => {
     
     await connection.close();
     
-    return data;
+    // Return in same format as Loaders.gl
+    return { data };
   } catch (error) {
     console.error('DuckDB query error:', error);
     throw error;

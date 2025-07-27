@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Map, NavigationControl, ViewState } from 'react-map-gl';
 import DeckGL from '@deck.gl/react';
-import { GeoJsonLayer } from '@deck.gl/layers';
+import { PathLayer, PolygonLayer } from '@deck.gl/layers';
 import { WebMercatorViewport } from '@deck.gl/core';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import ChatBox from './ChatBox';
@@ -26,6 +26,7 @@ interface QueryResult {
   data: any;
   timestamp: Date;
   visible: boolean;
+  source: 'direct' | 'duckdb'; // Add source tracking
 }
 
 interface MapData {
@@ -95,33 +96,62 @@ const MapComponent: React.FC = () => {
   };
 
   // Handle DuckDB query results
-  const handleQueryGenerated = async (geoJSONString: string, label?: string) => {
+  const handleQueryGenerated = async (dataString: string, label?: string) => {
     try {
-      const geoJSON = JSON.parse(geoJSONString);
+      console.log('Received data string:', dataString);
+      const data = JSON.parse(dataString);
+      console.log('Parsed data:', data);
       
-      if (geoJSON.features && geoJSON.features.length > 0) {
-        
-        // Store the query results
-        setQueryResults(geoJSON);
-        
-        // Add to query history
-        const queryName = label || `Query ${queryHistory.length + 1}`;
-        const newQuery: QueryResult = {
-          id: Date.now().toString(),
-          name: queryName,
-          data: geoJSON,
-          timestamp: new Date(),
-          visible: true
-        };
-        
-        setQueryHistory(prev => [...prev, newQuery]);
-        setCurrentQueryName(queryName);
-        
-        // Fit viewport to the features
-        fitViewportToFeatures(geoJSON.features);
+      const newQuery: QueryResult = {
+        id: Date.now().toString(),
+        name: label || 'Query Result',
+        data: data, // Use data directly without conversion
+        timestamp: new Date(),
+        visible: true,
+        source: 'duckdb'
+      };
+      
+      console.log('Created query result:', newQuery);
+      setQueryHistory(prev => [...prev, newQuery]);
+      setCurrentQueryName(label || 'Query Result');
+      
+      // Auto-zoom to features if possible
+      if (data.data && data.data.length > 0) {
+        console.log('Data has features, attempting to zoom');
+        const coords = data.data.flatMap((row: any) => {
+          if (row.geometry_json) {
+            try {
+              const geom = JSON.parse(row.geometry_json);
+              if (geom.type === 'Polygon' && geom.coordinates) {
+                // For polygons, flatten the coordinates (remove the outer array)
+                return geom.coordinates.flat();
+              } else if (geom.type === 'LineString' && geom.coordinates) {
+                return [geom.coordinates];
+              } else if (geom.type === 'Point' && geom.coordinates) {
+                return [geom.coordinates];
+              }
+            } catch (e) {
+              console.error('Error parsing geometry:', e);
+            }
+          }
+          return [];
+        });
+        console.log('Extracted coordinates:', coords.length);
+        if (coords.length > 0) {
+          const lons = coords.map((c: number[]) => c[0]);
+          const lats = coords.map((c: number[]) => c[1]);
+          console.log('Bounding box:', { lons: [Math.min(...lons), Math.max(...lons)], lats: [Math.min(...lats), Math.max(...lats)] });
+          const viewport = new WebMercatorViewport({ width: window.innerWidth, height: window.innerHeight });
+          const { longitude, latitude, zoom } = viewport.fitBounds(
+            [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], 
+            { padding: 20 }
+          );
+          console.log('New viewport:', { longitude, latitude, zoom });
+          setViewState({ longitude, latitude, zoom, pitch: 0, bearing: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } });
+        }
       }
     } catch (error) {
-      console.error('Error processing DuckDB results:', error);
+      console.error('Error processing query result:', error);
     }
   };
 
@@ -189,10 +219,12 @@ const MapComponent: React.FC = () => {
 
   // Create layers using useMemo for better performance
   const layers = useMemo(() => {
+    console.log('Creating layers from queryHistory:', queryHistory);
     const out: any[] = [];
     
     // Add layers from query history
     queryHistory.forEach((query, index) => {
+      console.log(`Processing query ${index}:`, query.name, query.visible, query.data);
       if (query.visible) {
         const colors = [
           [255, 165, 0, 180], // Orange
@@ -207,23 +239,67 @@ const MapComponent: React.FC = () => {
         const color = colors[index % colors.length];
         const lineColor = [color[0] * 0.7, color[1] * 0.7, color[2] * 0.7];
         
-        out.push(
-          new GeoJsonLayer({
-            id: `query-${query.id}`,
-            data: query.data,
-            pickable: true,
-            stroked: true,
-            filled: true,
-            getLineColor: lineColor as [number, number, number],
-            getFillColor: color as [number, number, number, number],
-            lineWidthMinPixels: 2,
-            getTooltip: ({ object }: { object: any }) =>
-              object && `${query.name}: ${JSON.stringify(object.properties, null, 2)}`
-          })
-        );
+        // Use data directly without any conversion
+        const layerData = query.data;
+        console.log('Layer data for', query.name, ':', layerData);
+        
+        // Determine layer type based on query name or data type
+        const isRoads = query.name.toLowerCase().includes('road') || 
+                       (query.data.data && query.data.data.length > 0 && 
+                        query.data.data[0].geometry && query.data.data[0].geometry.type === 'LineString');
+        
+        console.log('Is roads layer:', isRoads);
+        
+        if (isRoads) {
+          // Use PathLayer for roads
+          console.log('Creating PathLayer for roads');
+          out.push(
+            new PathLayer({
+              id: `query-${query.id}`,
+              data: layerData.data,
+              pickable: true,
+              getPath: (d: any) => {
+                if (d.geometry_json) {
+                  const geom = JSON.parse(d.geometry_json);
+                  return geom.coordinates || [];
+                }
+                return [];
+              },
+              getColor: color as [number, number, number, number],
+              getWidth: 2,
+              getTooltip: ({ object }: { object: any }) =>
+                object && `${query.name}: ${JSON.stringify(object.properties, null, 2)}`
+            })
+          );
+        } else {
+          // Use PolygonLayer for buildings and land use
+          console.log('Creating PolygonLayer for buildings/land use');
+          out.push(
+            new PolygonLayer({
+              id: `query-${query.id}`,
+              data: layerData.data,
+              pickable: true,
+              stroked: true,
+              filled: true,
+              getPolygon: (d: any) => {
+                if (d.geometry_json) {
+                  const geom = JSON.parse(d.geometry_json);
+                  return geom.coordinates || [];
+                }
+                return [];
+              },
+              getLineColor: lineColor as [number, number, number],
+              getFillColor: color as [number, number, number, number],
+              lineWidthMinPixels: 2,
+              getTooltip: ({ object }: { object: any }) =>
+                object && `${query.name}: ${JSON.stringify(object.properties, null, 2)}`
+            })
+          );
+        }
       }
     });
     
+    console.log('Created layers:', out.length);
     return out;
   }, [queryHistory]);
 
@@ -336,7 +412,7 @@ const MapComponent: React.FC = () => {
                         fontSize: '12px',
                         color: '#666'
                       }}>
-                        {query.data.features.length} features
+                        {query.data.data.length} features
                       </div>
                     </div>
                     
@@ -398,7 +474,10 @@ const MapComponent: React.FC = () => {
         </div>
       )}
 
-      <ChatBox onQueryGenerated={handleQueryGenerated} onCenterMap={handleCenterMap} />
+      <ChatBox 
+        onQueryGenerated={handleQueryGenerated} 
+        onCenterMap={handleCenterMap}
+      />
       
       <SearchBar onLocationSelect={handleLocationSelect} />
       
@@ -406,7 +485,8 @@ const MapComponent: React.FC = () => {
         isVisible={showInfoPanel}
         onToggle={() => setShowInfoPanel(!showInfoPanel)}
         currentLocation={currentLocation}
-        totalFeatures={queryHistory.reduce((sum, query) => sum + query.data.features.length, 0)}
+        totalFeatures={queryHistory.reduce((sum, query) => 
+          sum + query.data.data.length, 0)}
         activeLayers={queryHistory.filter(q => q.visible).length}
       />
       

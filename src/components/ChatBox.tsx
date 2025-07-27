@@ -84,55 +84,60 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
         return;
       }
 
-      // Use Gemini to analyze and generate the query
-      addMessage(`Processing your query with Gemini...`, false);
-      
-      let queryIntent: QueryIntent;
-      try {
-        queryIntent = await analyzeQueryWithGPT(queryText);
-        addMessage(`Analysis: ${queryIntent.explanation}`, false);
-      } catch (error) {
-        console.error('Gemini analysis failed:', error);
-        addMessage(`I couldn't understand that. Try being more specific, like "Show me buildings in Tallinn" or "Find roads around Tartu".`, false);
-        setLoading(false);
-        return;
-      }
-
-      // Execute the AI-generated query
-      addMessage(`Running query...`, false);
-      
-      const result = await queryDuckDB(queryIntent.query);
-
-      if (result && result.length > 0) {
-        const count = result.length;
-        
-        // Generate AI explanation of results
-        try {
-          const explanation = await generateQueryExplanation(queryIntent.query, result);
-          addMessage(`${explanation}`, false);
-        } catch (error) {
-          console.error('Error generating explanation:', error);
-          addMessage(`Found ${count} ${queryIntent.dataType} features.`, false);
-        }
-        
-        // Convert to GeoJSON and send to map
-        const geoJSON = convertToGeoJSON(result);
-        
-        // Add to query history
-        setQueryHistory(prev => [...prev, queryText]);
-        
-        const label = queryIntent.location ? `${queryIntent.dataType} around ${queryIntent.location}` : queryIntent.dataType;
-        onQueryGenerated(JSON.stringify(geoJSON), label);
-      } else {
-        addMessage(`No ${queryIntent.dataType} found${queryIntent.location ? ` within ${queryIntent.radius}km of ${queryIntent.location}` : ''}. Try a different search term or location.`, false);
-      }
+      // Fallback to DuckDB for complex queries
+      await handleDuckDBQuery(queryText);
     } catch (error) {
       console.error('Error executing query:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       addMessage(`Error: ${errorMessage}. Please try again.`, false);
-    } finally {
       setLoading(false);
     }
+  };
+
+  // Handle DuckDB queries (complex path)
+  const handleDuckDBQuery = async (queryText: string) => {
+    // Use Gemini to analyze and generate the query
+    addMessage(`Processing your query with Gemini...`, false);
+    
+    let queryIntent: QueryIntent;
+    try {
+      queryIntent = await analyzeQueryWithGPT(queryText);
+      addMessage(`Analysis: ${queryIntent.explanation}`, false);
+    } catch (error) {
+      console.error('Gemini analysis failed:', error);
+      addMessage(`I couldn't understand that. Try being more specific, like "Show me buildings in Tallinn" or "Find roads around Tartu".`, false);
+      setLoading(false);
+      return;
+    }
+
+    // Execute the AI-generated query
+    addMessage(`Running query...`, false);
+    
+    const result = await queryDuckDB(queryIntent.query);
+
+    if (result && result.data && result.data.length > 0) {
+      const count = result.data.length;
+      
+      // Generate AI explanation of results
+      try {
+        const explanation = await generateQueryExplanation(queryIntent.query, result.data);
+        addMessage(`${explanation}`, false);
+      } catch (error) {
+        console.error('Error generating explanation:', error);
+        addMessage(`Found ${count} ${queryIntent.dataType} features.`, false);
+      }
+      
+      // Add to query history
+      setQueryHistory(prev => [...prev, queryText]);
+      
+      const label = queryIntent.location ? `${queryIntent.dataType} around ${queryIntent.location}` : queryIntent.dataType;
+      onQueryGenerated(JSON.stringify(result), label);
+    } else {
+      addMessage(`No ${queryIntent.dataType} found${queryIntent.location ? ` within ${queryIntent.radius}km of ${queryIntent.location}` : ''}. Try a different search term or location.`, false);
+    }
+    
+    // Reset loading state
+    setLoading(false);
   };
 
   const handleSubmit = async () => {
@@ -140,103 +145,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({ onQueryGenerated, onCenterMap }) => {
     const userInput = input.trim();
     setInput('');
     await handleQuery(userInput);
-  };
-
-  // Convert DuckDB results to GeoJSON
-  const convertToGeoJSON = (data: any[]): any => {
-    
-    return {
-      type: 'FeatureCollection',
-      features: data.map((row, index) => {
-        // Parse WKT geometry from DuckDB
-        let geometry = null;
-        
-        if (row.geometry_wkt) {
-          // Parse WKT (Well-Known Text) format
-          const wkt = row.geometry_wkt;
-          
-          // Handle POINT
-          const pointMatch = wkt.match(/POINT\s*\(([^)]+)\)/i);
-          if (pointMatch) {
-            const coords = pointMatch[1].split(' ').map(Number);
-            geometry = {
-              type: 'Point',
-              coordinates: coords
-            };
-          } else {
-            // Handle LINESTRING
-            const lineMatch = wkt.match(/LINESTRING\s*\(([^)]+)\)/i);
-            if (lineMatch) {
-              const coords = lineMatch[1].split(',').map((c: string) => 
-                c.trim().split(' ').map(Number)
-              );
-              geometry = {
-                type: 'LineString',
-                coordinates: coords
-              };
-            } else {
-              // Handle POLYGON
-              const polygonMatch = wkt.match(/POLYGON\s*\(\(([^)]+)\)\)/i);
-              if (polygonMatch) {
-                const coords = polygonMatch[1].split(',').map((c: string) => 
-                  c.trim().split(' ').map(Number)
-                );
-                geometry = {
-                  type: 'Polygon',
-                  coordinates: [coords]
-                };
-              } else {
-                // Handle MULTIPOLYGON
-                const multiPolygonMatch = wkt.match(/MULTIPOLYGON\s*\(\(\(([^)]+)\)\)\)/i);
-                if (multiPolygonMatch) {
-                  const coords = multiPolygonMatch[1].split(',').map((c: string) => 
-                    c.trim().split(' ').map(Number)
-                  );
-                  geometry = {
-                    type: 'Polygon',
-                    coordinates: [coords]
-                  };
-                }
-              }
-            }
-          }
-        }
-        
-        // Fallback to coordinate fields if no WKT geometry
-        if (!geometry) {
-          if (row.lon && row.lat) {
-            geometry = {
-              type: 'Point',
-              coordinates: [row.lon, row.lat]
-            };
-          } else if (row.longitude && row.latitude) {
-            geometry = {
-              type: 'Point',
-              coordinates: [row.longitude, row.latitude]
-            };
-          } else {
-            // Default point at origin
-            geometry = {
-              type: 'Point',
-              coordinates: [0, 0]
-            };
-          }
-        }
-
-        const feature = {
-          type: 'Feature',
-          id: index,
-          geometry: geometry,
-          properties: Object.fromEntries(
-            Object.entries(row).filter(([key]) => 
-              !['geometry', 'geometry_wkt', 'geom', 'shape', 'wkt', 'coordinates', 'lon', 'lat', 'longitude', 'latitude', 'x', 'y'].includes(key)
-            )
-          )
-        };
-        
-        return feature;
-      })
-    };
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
